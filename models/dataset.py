@@ -109,9 +109,13 @@ class ProteinData(Dataset):
     def __getitem__(self, index):
         # for hard negative mining
         if isinstance(index, int):
+            if index >= len(self):
+                raise Exception("Index out of bounds")
             index = slice(index,index+1,None)
         elif index.start: # else it is a slice
             index = slice(index.start, min(index.stop, len(self)), None)
+            if index.stop <= index.start:
+                return [], []
         else:
             index = slice(0, min(index.stop, len(self)), None)
 
@@ -120,5 +124,7 @@ class ProteinData(Dataset):
         for i, j in self.pos[index.start:index.stop]:
             p1.append(i)
             p2.append(j)
+
+        #p1, p2 = *self.pos[index.start:index.stop]
         return p1, p2
 

@@ -12,7 +12,7 @@ from torch.autograd import Variable
 import numpy as np
 
 def cosine_sim(im, s):
-    """Cosine similarity between all the image and sentence pairs
+    """Cosine similarity between all the protein pairs
     """
     return im.mm(s.t())
 
@@ -23,16 +23,16 @@ class ContrastiveLoss(torch.nn.Module):
     Based on: http://yann.lecun.com/exdb/publis/pdf/hadsell-chopra-lecun-06.pdf
     """
 
-    def __init__(self, margin=2.0):
+    def __init__(self, margin=2.0, device=None):
         super(ContrastiveLoss, self).__init__()
         self.margin = margin
-        self.max_violation=False
+        self.device = device
 
     def sim(self, o1, o2):
         return torch.pow(torch.norm(o1 - o2, dim=1), 2)
 
     # Cosine similarity hard negative mining
-    def __forward(self, o1, o2):
+    def cosine_forward(self, o1, o2):
         # compute image-sentence score matrix
         scores = cosine_sim(o1, o2)
         diagonal = scores.diag().view(o1.size(0), 1)
@@ -48,7 +48,7 @@ class ContrastiveLoss(torch.nn.Module):
 
         # clear diagonals
         mask = torch.eye(scores.size(0)) > .5
-        I = Variable(mask).to(torch.device('cuda:1'))
+        I = Variable(mask).to(self.device)
         cost_s = cost_s.masked_fill_(I, 0)
         cost_im = cost_im.masked_fill_(I, 0)
 
@@ -60,12 +60,12 @@ class ContrastiveLoss(torch.nn.Module):
 
     # euclidean distance
     # harder negative mining thanks to jimmy yan
-    def forward(self, output1, output2):
+    def forward(self, output1, output2, quant=100):
         # compute the positive loss of all the data
         pos_loss = torch.pow(torch.norm(output2.sub(output1), dim=1), 2)
         neg_loss = torch.empty_like(pos_loss)
 
-        quant = min(30, output1.size(0)-1)
+        quant = min(quant, output1.size(0)-1)
         # find the hardest negative example
         for i, o_i in enumerate(output1):
             values, indices = torch.topk(torch.norm(output2.sub(o_i), dim=1), quant, largest=False)
@@ -74,18 +74,14 @@ class ContrastiveLoss(torch.nn.Module):
             while indices[rn] == i:
                 rn = int(random.random()*quant)
 
-            neg_loss[i] = values[rn]
+            neg_loss[i] = self.margin - values[rn]
 
-        neg_loss = torch.clamp(self.margin - neg_loss, 0.0)
+        neg_loss = torch.clamp(neg_loss, 0.0)
 
-        x = torch.mean(pos_loss) + torch.mean(neg_loss)
-        if math.isnan(x):
-            import pdb;pdb.set_trace()
-        return x
-
+        return torch.mean(pos_loss) + torch.mean(neg_loss)
         
     # og contrastive loss
-    def _forward(self, output1, output2, label):
+    def contrastive_forward(self, output1, output2, label):
         euclidean_distance = F.pairwise_distance(output1, output2)
         loss_contrastive = torch.mean((label) * torch.pow(euclidean_distance, 2) +
                 (1-label) * torch.pow(torch.clamp(self.margin - euclidean_distance, min=0.0), 2))
