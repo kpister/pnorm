@@ -4,12 +4,12 @@ Work building on my thesis: [Towards Extracting...](...)
 
 ### TO-DO
 
-[ ] Rebuild dataset
+- [ ] Rebuild dataset
 
-[ ] Hyperparameter exploration
+- [ ] Hyperparameter exploration
 
-[ ] Auxilary loss functions
+- [ ] Auxilary loss functions
 
-[ ] Classification task
+- [ ] Classification task
 
-[ ] Start reworking paper
+- [ ] Start reworking paper
