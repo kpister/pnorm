@@ -1,6 +1,6 @@
 '''Siamese Training
 Usage:
-    train.py --train=FILE --test=FILE [options]
+    train.py --train=FILE... --test=FILE [options]
 
 Options:
     -h, --help              show this message and exit
@@ -32,8 +32,8 @@ import os
 
 vocab_size = 128
 
-def load_data(filename, quant):
-    return dataset.ProteinData(filename, quant)
+def load_data(filename):
+    return dataset.ProteinData(filename)
 
 def load_model(args, device):
     lstm_in = vocab_size if not args['--CE'] else 100
@@ -92,6 +92,7 @@ def train(engine, data, batch_size, device):
 
 def evaluate(engine, data, batch_size, device):
     engine['model'].eval()
+    engine['cmodel'].eval()
     loss = 0
 
     with torch.no_grad():
@@ -99,7 +100,14 @@ def evaluate(engine, data, batch_size, device):
             end = min(i+batch_size, len(data))
             if end <= i: break
 
-            loss += engine['loss'](*(engine['model'](*data[i:end]))).item()
+            prot1, prot2 = data[i:end]
+            if engine['cembed']:
+                for idp in range(len(prot1)):
+                    prot1[idp] = engine['cmodel'](prot1[idp])
+                for idp in range(len(prot2)):
+                    prot2[idp] = engine['cmodel'](prot2[idp])
+
+            loss += engine['loss'](*(engine['model'](prot1, prot2))).item()
             print(f'Eval progress: {i*100.0/len(data):.2f}%', end='\r')
 
     print(' '*50, end='\r')
@@ -120,10 +128,10 @@ if __name__ == '__main__':
     epochs     = int(args['--EPOCHS'])
     batch_size = int(args['--BATCH_SIZE'])
 
-    train_data = load_data(args['--train'], -1)
-    test_data  = load_data(args['--test'], -1)
+    train_data = load_data(args['--train'])
+    test_data  = load_data(args['--test'])
     if args['--val']:
-        val_data = load_data(args['--val'], -1)
+        val_data = load_data(args['--val'])
     else:
         val_data = test_data
 

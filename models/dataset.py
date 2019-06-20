@@ -27,14 +27,16 @@ def pairs(prot_list):
 #TODO build negative positive set. common words are close and far from everything else
 # Add a single line of many non-protein ngrams
 class ProteinData(Dataset):
-    def __init__(self, filename, quant):
+    def __init__(self, filename):
         super(ProteinData, self).__init__()
-        if not os.path.isfile(filename):
-            raise Exception(f'File {filename} does not exist')
+        #if not os.path.isfile(filename):
+            #raise Exception(f'File {filename} does not exist')
 
-        self.pos, self.pos_char, self.classes, self.num_classes = self.load(filename, quant)
+        if isinstance(filename, str):
+            filename = [filename]
+        self.pos, self.pos_char, self.classes, self.num_classes = self.load(filename)
 
-    def load(self, filename, quant):
+    def load(self, filenames):
         # classes[index] :: list of names for the protein indexed by index
         # each class is a different protein
         # pos is a list of all positive pairs
@@ -44,16 +46,16 @@ class ProteinData(Dataset):
 
         # index represents the current class
         index = 0
-        for line in open(filename):
-            if index > quant and quant != -1:
-                break
-            q = [i.strip() for i in line.split('~') if len(i.strip()) > 0]
-            if len(q) == 0 or len(q) == 1: continue
-            classes[index] = q
-            _pos, _pos_char = pairs(classes[index])
-            pos += _pos
-            pos_char += _pos_char
-            index += 1
+        print(filenames)
+        for fn in filenames:
+            for line in open(fn):
+                q = [i.strip() for i in line.split('~') if len(i.strip()) > 0]
+                if len(q) == 0 or len(q) == 1: continue
+                classes[index] = q
+                _pos, _pos_char = pairs(classes[index])
+                pos += _pos
+                pos_char += _pos_char
+                index += 1
         return pos, pos_char, classes, index
 
     def shuffle(self):
