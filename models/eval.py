@@ -4,7 +4,7 @@ Usage:
 
 Options:
     --DEVICE STR        set the runner [default: cpu]
-    --CE                set charemb [default: False]
+    --DISTANCE MTD      set the distance method {cos, euc} [default: euc]
 """
 
 
@@ -12,6 +12,7 @@ from docopt import docopt
 import dataset
 from leven import levenshtein
 import torch
+import sklearn.metrics as metrics
 import sys
 sys.path.append('./models')
 from model import Siamese
@@ -46,11 +47,16 @@ def classify(val_data, model, dist_metric):
         correct += y_h[0] == y
         total += 1
     return correct/total
+
+def cos_c(x, thresh):
+    return x > thresh
+def euc_c(x, thresh):
+    return x < thresh
     
-def evaluate(val_data, model, dist_metric=cos):
-    count = 20
+def evaluate(val_data, model, dist_metric, correctness):
+    count = 100
     min_thresh = 0
-    max_thresh = 2
+    max_thresh = 3
     correct = [[0,0] for i in range(count)]
     total = [0,0]
     batch_size = 1000
@@ -67,7 +73,7 @@ def evaluate(val_data, model, dist_metric=cos):
 
         for j in range(len(prot1)):
             for k in range(count):
-                if res[j] < min_thresh + k / count * (max_thresh-min_thresh):
+                if correctness(res[j], min_thresh + k / count * (max_thresh-min_thresh)):
                     correct[k][0] += 1
         total[0] += len(prot1)
 
@@ -76,7 +82,7 @@ def evaluate(val_data, model, dist_metric=cos):
         res = dist_metric(n1, n2)
         for j in range(len(neg1)):
             for k in range(count):
-                if res[j] >= min_thresh + k / count * (max_thresh-min_thresh):
+                if not correctness(res[j], min_thresh + k / count * (max_thresh-min_thresh)):
                     correct[k][1] += 1
         total[1] += len(neg1)
 
@@ -90,15 +96,26 @@ def evaluate(val_data, model, dist_metric=cos):
                 print(f'\nUpdated best value: {best}')
 
     print(' '*50, end='\r')
+
+    tpr = [(i[0]/total[0]) for i in correct]
+    fpr = [(total[1] - i[1])/total[1] for i in correct]
+    roc_auc = metrics.auc(fpr, tpr)
+
+    with open('out.txt', 'w') as e:
+        e.write(f'{roc_auc}\n')
+        for x,y in zip(fpr,tpr):
+            e.write(f'{x},{y}\n')
+
     return [(i, total) for i in correct]
 
-def get_siamese_model(filename, device='cuda:0', charemb=False):
+def get_siamese_model(filename, device='cuda:0'):
     vocab_size = 128
+    c_embedding_dim = 200
     hidden_dim = 100
     output_dim = 100
     num_layers = 5
     device = torch.device(device)
-    model = Siamese(vocab_size, hidden_dim, output_dim, num_layers, device, charemb=charemb)
+    model = Siamese(vocab_size, c_embedding_dim, hidden_dim, output_dim, num_layers, device)
     model.load_state_dict(torch.load(filename, map_location=device))
     model.to(device)
     model.eval()
@@ -107,9 +124,12 @@ def get_siamese_model(filename, device='cuda:0', charemb=False):
 if __name__ == '__main__':
     args = docopt(__doc__)
     print(args)
-    val_data  = dataset.ProteinData(args['--input'], -1)
-    model = get_siamese_model(args['--model'], args['--DEVICE'], args['--CE'])
-    vacc = evaluate(val_data, model, euc)
+    val_data  = dataset.ProteinData(args['--input'])
+    model = get_siamese_model(args['--model'], args['--DEVICE'])
+
+    d = euc if args['--DISTANCE'].lower() == 'euc' else cos
+    dc = euc_c if args['--DISTANCE'].lower() == 'euc' else cos_c
+    vacc = evaluate(val_data, model, dist_metric=d, correctness=dc)
 
     best = 0
     with open(args['--output'], 'w') as w:
