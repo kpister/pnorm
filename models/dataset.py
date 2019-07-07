@@ -49,8 +49,8 @@ class ProteinData(Dataset):
             while pclass == pclass2:
                 pclass2 = random.randint(0, self.num_classes - 1)
 
-            p1.append([ord(c) for c in (self.classes[pclass][0])])
-            p2.append([ord(c) for c in (random.choice(self.classes[pclass2][1:]))])
+            p1.append(torch.tensor([ord(c) for c in (self.classes[pclass][0])],dtype=torch.long))
+            p2.append(torch.tensor([ord(c) for c in (random.choice(self.classes[pclass2][1:]))],dtype=torch.long))
         return p1, p2
 
     # Return positive on even indices, negative on odd

@@ -1,13 +1,10 @@
 '''Siamese Training
 Usage:
-    train.py --train=FILE... --test=FILE [options]
+    train.py --input=DIR --minput=FILE [options]
 
 Options:
     -h, --help              show this message and exit
-    --test FILE             set the path of the test data file
-    --train FILE            set the path of the training data file
-    --val FILE              set the path of the validation data file
-    --BATCH_SIZE SIZE       set BATCH_SIZE [default: 64]
+    --BATCH_SIZE SIZE       set BATCH_SIZE [default: 512]
     --CHECKPOINT_DIR BASE   set the checkpoint directory [default: ./checkpoints/]
     --DEVICE DEV            set the device (cuda:0, cuda:1, cpu) [default: cuda:1]
     --DROPOUT FLOAT         set the dropout rate [default: 0.3]
@@ -114,9 +111,10 @@ if __name__ == '__main__':
     epochs     = int(args['--EPOCHS'])
     batch_size = int(args['--BATCH_SIZE'])
 
-    train_data = dataset.ProteinData(args['--train'])
-    test_data  = dataset.ProteinData(args['--test'])
-    val_data   = dataset.ProteinData(args['--val']) if args['--val'] else test_data
+    train_data = dataset.ProteinData([(os.path.join(args['--input'], 'train.txt'), args['--minput']]))
+    # don't look at test data
+    #test_data = dataset.ProteinData(os.path.join(args['--input'], 'test.txt'))
+    val_data = dataset.ProteinData(os.path.join(args['--input'], 'val.txt'))
 
     # Create Model
     device = torch.device(args['--DEVICE'])
@@ -141,15 +139,17 @@ if __name__ == '__main__':
             best_vloss = vloss
             best_model = engine['model']
             best_epoch = e
-        elif e - best_epoch == 5:
+        elif e - best_epoch >= 5:
             # reset the weights for maybe a better approach
             engine['model'] = best_model
             engine['optim'] = torch.optim.Adam(engine['model'].parameters(), lr=(float(args['--LEARNING_RATE'])*0.5*(e//10)))
+            best_epoch = e
+            print('Reseting to best found weights')
             # try a different loss? try a different optimizer? change learning rate?
 
     # evaluate on test
     engine['model'] = best_model
-    tloss = evaluate(engine, val_data, batch_size, device, args['--SILENT'])
-    print(f'Accuracy on test set: {tloss:.4f}')
+    floss = evaluate(engine, val_data, batch_size, device, args['--SILENT'])
+    print(f'Final accuracy on val set: {floss:.4f}')
     with open('scoreboard.txt', 'a') as w:
-        w.write(f"{tloss:.4f},{args['--LSTM_NODES']},{args['--LAYERS']},{args['--EMBEDDING_DIM']},{best_epoch}\n")
+        w.write(f"{floss:.4f},{args['--LSTM_NODES']},{args['--LAYERS']},{args['--EMBEDDING_DIM']},{best_epoch}\n")

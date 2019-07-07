@@ -110,12 +110,12 @@ def evaluate(val_data, model, dist_metric, correctness):
 
 def get_siamese_model(filename, device='cuda:0'):
     vocab_size = 128
-    c_embedding_dim = 200
-    hidden_dim = 100
+    c_embedding_dim = 100
+    hidden_dim = 300
     output_dim = 100
     num_layers = 5
     device = torch.device(device)
-    model = Siamese(vocab_size, c_embedding_dim, hidden_dim, output_dim, num_layers, device)
+    model = Siamese(vocab_size, c_embedding_dim, hidden_dim, output_dim, 0.0, num_layers, device)
     model.load_state_dict(torch.load(filename, map_location=device))
     model.to(device)
     model.eval()

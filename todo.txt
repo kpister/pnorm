@@ -11,3 +11,5 @@ Build a lemmatizer
 These take a word and a tag (the form of the word) then predict the morphological variants
 
 -- Misc
+Evaluate on BioCreative III Gene Normalization task
+Evaluate on BioCreative II Gene Normalization task
