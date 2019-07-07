@@ -4,18 +4,21 @@ Usage:
 
 Options:
     -h, --help              show this message and exit
+    --ACTIVATION NAME       set the activation type (relu, tanh) [default: relu]
     --BATCH_SIZE SIZE       set BATCH_SIZE [default: 512]
     --CHECKPOINT_DIR BASE   set the checkpoint directory [default: ./checkpoints/]
     --DEVICE DEV            set the device (cuda:0, cuda:1, cpu) [default: cuda:1]
     --DROPOUT FLOAT         set the dropout rate [default: 0.3]
-    --EMBEDDING_DIM NUM     set the size of the embedded space [default: 100]
+    --CHAR_EMBEDDING NUM    set the size of the char embedded space [default: 100]
+    --ENCODER TYPE          set the type of encoder (lstm, cnn, gru) [default: lstm]
     --EPOCHS COUNT          set max number of epochs [default: 40]
     --LAYERS NUM            set the number of layers in the encoder [default: 5]
     --LEARNING_RATE FLOAT   set learning rate for adam optimizer [default: 0.001]
     --LOAD_WEIGHTS FILE     set old weights to learn from
-    --LSTM_NODES NUM        set the number of nodes in the hidden layer [default: 120]
+    --HIDDEN NUM            set the number of nodes in the hidden layer [default: 120]
     --MARGIN FLOAT          set the loss cutoff margin [default: 2.0]
     --SILENT                set if printing should happen [default: False]
+    --WORD_EMBEDDING NUM    set the size of the word embedded space [default: 100]
 '''
 
 import torch
@@ -31,13 +34,19 @@ import os
 vocab_size = 128
 
 def load_model(args, device):
-    model = M.Siamese(input_dim=vocab_size, 
-                      char_embedding_dim=int(args['--EMBEDDING_DIM']),
-                      hidden_dim=int(args['--LSTM_NODES']), 
-                      output_dim=int(args['--EMBEDDING_DIM']),
-                      dropout_rate=float(args['--DROPOUT']),
-                      num_layers=int(args['--LAYERS']),
-                      device=device)
+    opts = {}
+    opts['char_embedding'] = int(args['--CHAR_EMBEDDING'])
+    opts['word_embedding'] = int(args['--WORD_EMBEDDING'])
+    opts['bidirectional'] = True
+    opts['activation'] = args['--ACTIVATION']
+    opts['input_dim'] = vocab_size
+    opts['dropout'] = float(args['--DROPOUT'])
+    opts['encoder'] = args['--ENCODER']
+    opts['layers'] = int(args['--LAYERS'])
+    opts['hidden'] = int(args['--HIDDEN'])
+    opts['device'] = device
+
+    model = M.Siamese(opts)
 
     if args['--LOAD_WEIGHTS']:
         model.load_state_dict(torch.load(args['--LOAD_WEIGHTS'], map_location=device))
@@ -111,9 +120,9 @@ if __name__ == '__main__':
     epochs     = int(args['--EPOCHS'])
     batch_size = int(args['--BATCH_SIZE'])
 
-    train_data = dataset.ProteinData([(os.path.join(args['--input'], 'train.txt'), args['--minput']]))
-    # don't look at test data
-    #test_data = dataset.ProteinData(os.path.join(args['--input'], 'test.txt'))
+    pos = [os.path.join(args['--input'], 'train.txt'), args['--minput']]
+    print(pos)
+    train_data = dataset.ProteinData(pos)
     val_data = dataset.ProteinData(os.path.join(args['--input'], 'val.txt'))
 
     # Create Model

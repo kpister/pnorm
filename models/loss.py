@@ -11,6 +11,14 @@ import torchvision.models as models
 from torch.autograd import Variable
 import numpy as np
 
+def l2norm(X):
+    """L2-normalize columns of X
+    """
+    norm = torch.pow(X, 2).sum(dim=1, keepdim=True).sqrt()
+    X = torch.div(X, norm)
+    X[X != X] = 0 # remove nan
+    return X
+
 def cosine_sim(im, s):
     """Cosine similarity between all the protein pairs
     """
@@ -33,6 +41,9 @@ class ContrastiveLoss(torch.nn.Module):
 
     # Cosine similarity hard negative mining
     def cosine_forward(self, o1, o2):
+        # normalize:
+        o1, o2 = l2norm(o1), l2norm(o2)
+
         # compute image-sentence score matrix
         scores = cosine_sim(o1, o2)
         diagonal = scores.diag().view(o1.size(0), 1)

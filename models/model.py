@@ -4,36 +4,60 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
-def l2norm(X):
-    """L2-normalize columns of X
-    """
-    norm = torch.pow(X, 2).sum(dim=1, keepdim=True).sqrt()
-    X = torch.div(X, norm)
-    X[X != X] = 0 # remove nan
-    return X
+# based on protonet model
+# in_dim = char_embedding_dim
+def create_cnn(in_dim, hid_dim, out_dim):
+    def conv_block(in_channels, out_channels):
+        kernel = 3
+        return nn.Sequential(
+            nn.Conv1d(in_channels, out_channels, kernel),
+            nn.BatchNorm1d(out_channels),
+            nn.ReLU(),
+            nn.MaxPool1d(2)
+        )
+
+    encoder = nn.Sequential(
+        conv_block(in_dim, hid_dim),
+        conv_block(hid_dim, hid_dim),
+        conv_block(hid_dim, hid_dim),
+        conv_block(hid_dim, out_dim)
+    )
+
+    return encoder
 
 # siamese network inspiration: https://github.com/fangpin/siamese-pytorch/blob/master/model.py
 class Siamese(nn.Module):
-    def __init__(self, input_dim, char_embedding_dim, hidden_dim, output_dim, dropout_rate, num_layers, device):
+    def __init__(self, opts):
         super(Siamese, self).__init__()
 
-        self.char_embedding_dim = char_embedding_dim
-        self.device = device
-        self.num_layers = num_layers
-        self.hidden_dim = hidden_dim
-        self.bidirectional = True
+        self.char_embedding_dim = opts['char_embedding']
+        self.device = opts['device']
+        self.num_layers = opts['layers']
+        self.hidden_dim = opts['hidden']
+        self.bidirectional = opts['bidirectional']
+        self.encoder = opts['encoder']
+        non_linear_activation = nn.ReLU() if opts['activation'] == 'relu' else nn.Tanh()
 
-        self.char_embed = nn.Embedding(input_dim, char_embedding_dim)
-        self.lstm = nn.LSTM(char_embedding_dim, hidden_dim, num_layers, batch_first=True, bidirectional=self.bidirectional)
+        self.char_embed = nn.Embedding(opts['input_dim'], self.char_embedding_dim)
+
+        if opts['encoder'] == 'cnn':
+            self.prot_embed = create_cnn(self.char_embedding_dim, self.hidden_dim, self.hidden_dim)
+        elif opts['encoder'] == 'gru':
+            self.prot_embed = nn.GRU(self.char_embedding_dim, self.hidden_dim, self.num_layers, batch_first=True, dropout=opts['dropout'])
+        elif opts['encoder'] == 'lstm':
+            self.prot_embed = nn.LSTM(self.char_embedding_dim, self.hidden_dim, self.num_layers, batch_first=True, bidirectional=self.bidirectional, dropout=opts['dropout'])
         
         self.fc = nn.Sequential(
-                nn.Dropout(dropout_rate),
-                nn.Linear(hidden_dim*(1+self.bidirectional), output_dim),
-                nn.ReLU())
+                nn.Dropout(opts['dropout']),
+                nn.Linear(self.hidden_dim*(1+self.bidirectional), opts['word_embedding']),
+                non_linear_activation)
 
     def init_hidden(self, batch):
-        return (Variable(torch.randn((1+self.bidirectional)*self.num_layers, batch, self.hidden_dim)).to(self.device),
-                Variable(torch.randn((1+self.bidirectional)*self.num_layers, batch, self.hidden_dim)).to(self.device))
+        if self.encoder == 'lstm':
+            return (Variable(torch.randn((1+self.bidirectional)*self.num_layers, batch, self.hidden_dim)).to(self.device),
+                    Variable(torch.randn((1+self.bidirectional)*self.num_layers, batch, self.hidden_dim)).to(self.device))
+        else:
+            return Variable(torch.randn(self.num_layers, batch, self.hidden_dim)).to(self.device)
 
 
     def forward_one(self, x, hidden):
@@ -42,10 +66,10 @@ class Siamese(nn.Module):
                        key=lambda v:v[0].shape[0], reverse=True)
 
         # encode
-        lstm_out, _ = self.lstm(self.pad_and_pack_batch(sat).to(self.device), hidden)
+        encoder_out, _ = self.prot_embed(self.pad_and_pack_batch(sat).to(self.device), hidden)
 
         # unpack sequences
-        out, _ = pad_packed_sequence(lstm_out, batch_first=True)
+        out, _ = pad_packed_sequence(encoder_out, batch_first=True)
 
         # Use lstm_out average or max pooling?
         out = torch.mean(out, 1)
@@ -54,9 +78,6 @@ class Siamese(nn.Module):
         # cuda 9.2 error
         try: x_ = self.fc(out)
         except: x_ = self.fc(out)
-
-        # when training with cosine similarity
-        #x_ = l2norm(x_)
 
         # resort
         for i, v in enumerate(x_):
