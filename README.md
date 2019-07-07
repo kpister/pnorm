@@ -2,9 +2,9 @@
 
 Work building on my thesis: [Towards Extracting...](...)
 
-### TO-DO
+### TODO
 
-- [ ] Rebuild dataset
+- [x] Rebuild dataset
 
 - [ ] Hyperparameter exploration
 
@@ -13,3 +13,7 @@ Work building on my thesis: [Towards Extracting...](...)
 - [ ] Classification task
 
 - [ ] Start reworking paper
+
+### Tags
+
+python, deep learning, NLP
