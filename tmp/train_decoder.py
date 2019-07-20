@@ -1,30 +1,37 @@
 """Train Decoder Architecture
-Usage: train_decoder.py [options]
+Usage: 
+    train_decoder.py [options]
 
 Options:
-    --epochs INT
-    --lr FLOAT
-    --device STR
-    --hidden_size INT
-    --output_size INT
-    --dropout FLOAT
-    -pt, --protein_training FILE
-    -pv, --protein_validation FILE
-    -md, --morphology_data FILE
+    -h, --help
+    --epochs INT                        set number of epochs [default: 20]
+    --lr FLOAT                          set the learning rate [default: 0.001]
+    --device STR                        set the device [default: cuda:0]
+    --hidden_size INT                   set the size of encoder hidden [default: 200]
+    --output_size INT                   set the output size of the decoder [default: 200]
+    --dropout FLOAT                     set the dropout rate [default: 0.3]
+    --margin FLOAT                      set the loss margin [default: 2.0]
+    --char_embedding INT                set the size of char embedding [default: 200]
+    --word_embedding INT                set the size of word embedding [default: 200]
+    --layers INT                        set the depth of the encoder [default: 5]
+    --batch_size INT                    set the batch size [default: 500]
+    -t, --protein_training FILE         set the input file
+    -v, --protein_validation FILE       set the other input file
+    -d, --morphology_data FILE          set the last input file
 """
 
 # personal libs
-from constants import SOS_token, EOS_token, MAX_LENGTH
+from constants import *
 import models
-import loss 
 import dataset
 
 # other libs
+from docopt import docopt #type: ignore
 import torch 
 from torch.autograd import Variable
-from docopt import docopt #type: ignore
 from typing import Dict, Any
 import random
+from tqdm import trange #type: ignore
 
 def train(engine: models.Engine, 
           prot_data: dataset.ProteinData, 
@@ -32,11 +39,12 @@ def train(engine: models.Engine,
 
     engine.encoder.train()
     engine.decoder.train()
-    prot_epoch_loss = 0
-    morph_epoch_loss = 0
+    prot_epoch_loss:float = 0
+    morph_epoch_loss:float = 0
+    torch.autograd.set_detect_anomaly(True)
 
-    for idx in range(max(len(prot_data), len(morph_data))):
-        total_loss = None
+    for idx in trange(max(len(prot_data), len(morph_data))):
+        total_loss = torch.tensor([0], dtype=torch.float, device=engine.device)
 
         engine.encoder_optim.zero_grad()
         engine.decoder_optim.zero_grad()
@@ -44,73 +52,60 @@ def train(engine: models.Engine,
         # Train PEN
         if idx < len(prot_data):
             x, y = zip(*prot_data[idx])
+            enc_hidden = engine.encoder.initHidden(batch_size=len(x))
 
-            x_embedding = engine.encoder._forward(x, data='protein')
-            y_embedding = engine.encoder._forward(y, data='protein')
-            prot_loss = loss.SimilarityLoss(x_embedding, y_embedding)
-            total_loss = prot_loss
+            x_embedding, _hs = engine.encoder._forward(x, enc_hidden, data='protein') #type: ignore
+            y_embedding, _hs = engine.encoder._forward(y, enc_hidden, data='protein') #type: ignore
+            prot_loss = engine.protein_criterion._forward(x_embedding, y_embedding)
+            total_loss += prot_loss.view(1).to(engine.device)
 
-            prot_epoch_loss += prot_loss.item()
+            prot_epoch_loss += prot_loss.item() / len(x)
+            enc_hidden = _hs
 
         # Train Morphology, adapted from:
         # https://github.com/pytorch/tutorials/blob/master/intermediate_source/seq2seq_translation_tutorial.py
         if idx < len(morph_data):
             # single morpheme per batch
-            lemma, tag, word = morph_data[idx]
+            meme_loss = torch.tensor([0], dtype=torch.float, device=engine.device)
 
-            # Encoder morpheme
-            engine.encoder.hidden = engine.encoder.initHidden()
+            lemma, input_tensor = zip(*morph_data[idx])
+            lemma_tensor = torch.stack(lemma).transpose(0,1).to(engine.device)
 
-            input_tensor = torch.cat((word[0], tag[0]))
-            target_length = lemma[0].size(0)
-
-            encoder_outputs = torch.zeros(MAX_LENGTH, engine.encoder.hidden_size, device=engine.device)
-
-            meme_loss = loss.InitMorphemeLoss()
-
-            encoder_output, encoder_hidden = engine.encoder._forward(input_tensor)
-            encoder_outputs[:input_tensor.size(0)] = encoder_output[0] # 1 x 1 x |E|
+            enc_out, enc_hidden = engine.encoder._forward_unordered( #type:ignore
+                    input_tensor, hidden=enc_hidden)
 
             # Decode morpheme
-            decoder_input = torch.tensor([[SOS_token]], device=engine.device)
+            dec_input = torch.tensor([SOS_token] * len(lemma), device=engine.device)
 
-            engine.decoder.setHidden(encoder_hidden)
+            dec_hidden = enc_hidden[0][-1]
 
-            use_teacher_forcing = True if random.random() < 0.5 else False
+            use_teacher_forcing = True if random.random() < 1.0 else False
 
             if use_teacher_forcing:
                 # Teacher forcing: Feed the target as the next input
-                for di in range(target_length):
-                    decoder_output, decoder_attention = engine.decoder._forward(
-                        decoder_input, encoder_outputs)
-                    meme_loss += loss.MorphemeLoss(decoder_output, lemma[0][di])
-                    decoder_input = lemma[0][di]  # Teacher forcing
+                for di in range(MAX_LENGTH):
+                    dec_output, dec_hidden, _ = engine.decoder._forward(
+                        dec_input, dec_hidden, enc_out)
+                    meme_loss += engine.morpheme_criterion(dec_output, lemma_tensor[di])
+                    dec_input = lemma_tensor[di]  # Teacher forcing
 
             else:
                 # Without teacher forcing: use its own predictions as the next input
-                for di in range(target_length):
-                    decoder_output, decoder_attention = engine.decoder._forward(
-                        decoder_input, encoder_outputs)
-                    topv, topi = decoder_output.topk(1)
-                    decoder_input = topi.squeeze().detach()  # detach from history as input
+                for di in range(MAX_LENGTH):
+                    dec_output, dec_hidden, _ = engine.decoder._forward(
+                        dec_input, dec_hidden, enc_out)
+                    topv, topi = dec_output.topk(1)
+                    dec_input = topi.squeeze().detach()  # detach from history as input
 
-                    meme_loss += loss.MorphemeLoss(decoder_output, lemma[0][di])
-                    if decoder_input.item() == EOS_token:
+                    meme_loss += engine.morpheme_criterion(dec_output, lemma_tensor[di])
+                    if dec_input.item() == EOS_token:
                         break
 
-            if total_loss:
-                total_loss += meme_loss
-            else:
-                total_loss = meme_loss
+            total_loss += meme_loss / morph_data.batch_size
+            morph_epoch_loss += meme_loss.item() / morph_data.batch_size
 
-            morph_epoch_loss += meme_loss.item()
+        total_loss.backward(retain_graph=True)
 
-        total_loss.backward() # type: ignore
-
-        # Clip gradient norms
-        clip = 0.1
-        torch.nn.utils.clip_grad_norm(engine.encoder.parameters(), clip)
-        torch.nn.utils.clip_grad_norm(engine.decoder.parameters(), clip)
         engine.encoder_optim.step()
         engine.decoder_optim.step() 
 
@@ -118,11 +113,16 @@ def train(engine: models.Engine,
 
 if __name__ == '__main__':
     args = docopt(__doc__)
+    print(args)
     epochs = int(args['--epochs'])
+    bs = int(args['--batch_size'])
 
-    prot_training_data = dataset.ProteinData(args['--protein_training'])
-    prot_val_data      = dataset.ProteinData(args['--protein_validation'])
-    morph_data         = dataset.MorphemeData(args['--morphology_data']) 
+    prot_training_data = dataset.ProteinData(args['--protein_training'], batch_size=bs)
+    morph_data         = dataset.MorphemeData(args['--morphology_data'], batch_size=bs) 
+    args['--input_dim'] = VOCAB_SIZE + morph_data.num_tags
+
+    if args['--protein_validation']:
+        prot_val_data  = dataset.ProteinData(args['--protein_validation'])
 
     engine = models.Engine(args)
 
@@ -131,3 +131,4 @@ if __name__ == '__main__':
                      prot_data=prot_training_data, 
                      morph_data=morph_data)
 
+        print(f'Epoch {e} complete. Loss: {loss[0]:.4f}, {loss[1]:.4f}')

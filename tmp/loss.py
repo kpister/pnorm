@@ -1,35 +1,36 @@
 import random
-import torch # type: ignore
-from torch.nn import functional # type: ignore
-from torch.autograd import Variable # type: ignore
+import torch 
+from torch.nn import functional 
+from torch.autograd import Variable 
 
-# euclidean distance
-# harder negative mining thanks to jimmy yan
-def SimilarityLoss(output1, output2, quant=100, margin=2):
-    # compute the positive loss of all the data
-    pos_loss = torch.pow(torch.norm(output2.sub(output1), dim=1), 2)
-    neg_loss = torch.empty_like(pos_loss)
+class SimilarityLoss(torch.nn.Module):
+    def __init__(self, margin=2.0):
+        self.margin = margin
 
-    quant = min(quant, output1.size(0)-1)
-    # find the hardest negative example
-    for i, o_i in enumerate(output1):
-        values, indices = torch.topk(torch.norm(output2.sub(o_i), dim=1), quant, largest=False)
+    # euclidean distance
+    # harder negative mining thanks to jimmy yan
+    def _forward(self, output1, output2, quant=100) -> torch.Tensor:
+        # compute the positive loss of all the data
+        pos_loss = torch.pow(torch.norm(output2.sub(output1), dim=1), 2)
+        neg_loss = torch.empty_like(pos_loss)
 
-        rn = int(random.random()*quant)
-        while indices[rn] == i:
+        quant = min(quant, output1.size(0)-1)
+        # find the hardest negative example
+        for i, o_i in enumerate(output1):
+            values, indices = torch.topk(torch.norm(output2.sub(o_i), dim=1), quant, largest=False)
+
             rn = int(random.random()*quant)
+            while indices[rn] == i:
+                rn = int(random.random()*quant)
 
-        neg_loss[i] = margin - values[rn]
+            neg_loss[i] = self.margin - values[rn]
 
-    neg_loss = torch.clamp(neg_loss, 0.0)
+        neg_loss = torch.clamp(neg_loss, 0.0)
 
-    return torch.mean(pos_loss) + torch.mean(neg_loss)
+        return torch.mean(pos_loss) + torch.mean(neg_loss)
 
-def MorphemeLoss(decoder_output, target):
-    pass
-
-def InitMorphemeLoss():
-    return 0
+def MorphemeLoss():
+    return torch.nn.NLLLoss()
 
 # helper function for MaskedCrossEntropy
 def sequence_mask(sequence_length, max_len=None):

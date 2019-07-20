@@ -1,5 +1,2 @@
-fix morpheme loss
-build tag space
-pass whole word
 update encoder
 allow batching

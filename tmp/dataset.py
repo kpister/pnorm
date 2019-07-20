@@ -3,16 +3,20 @@ import math
 import torch #type: ignore
 import random
 from torch.utils.data import Dataset #type: ignore
-from constants import SOS_token, EOS_token, VOCAB_SIZE
+from constants import *
 
 from typing import List, Tuple, Dict
 
 tag_dict:Dict[str,int] = {}
 tag_dict['end'] = VOCAB_SIZE
 
+def pad(tensor, size):
+    return torch.cat((tensor, torch.tensor([EOS_token]*(size - tensor.size(0)))))
 # convert any sequence to a tensor of the ascii values
 def seq2tensor(seq: str) -> torch.Tensor:
     return torch.tensor([SOS_token] + [ord(c) for c in seq] + [EOS_token], dtype=torch.long)
+def lemma2tensor(seq: str) -> torch.Tensor:
+    return pad(torch.tensor([ord(c) for c in seq], dtype=torch.long), MAX_LENGTH)
 
 # add tags to the global dictionary, return the tag index
 def tag2idx(tag: str) -> int:
@@ -22,9 +26,9 @@ def tag2idx(tag: str) -> int:
     return tag_dict[tag]
 
 # convert tag to tensor -- uses tag2idx
-def tag2tensor(tag: str) -> torch.Tensor:
+def input2tensor(word:str, tag: str) -> torch.Tensor:
     pieces: List[str] = tag.split(';')
-    return torch.tensor([tag2idx(p) for p in pieces])
+    return pad(torch.cat((seq2tensor(word), torch.tensor([tag2idx(p) for p in pieces]))),MAX_LENGTH)
 
 # create a list of tuples -- tensor of the leader and tensor of each other member
 def pairs(prot_list: List[str]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
@@ -51,7 +55,7 @@ class LoadData(Dataset):
         return math.ceil(len(self.data) / self.batch_size)
 
     # get a batch of data, size of batch is determined by batch_size
-    def __getitem__(self, index:int) -> List[Tuple[torch.Tensor,...]]:
+    def __getitem__(self, index:int) -> List[Tuple[torch.Tensor,torch.Tensor]]:
         start = index * self.batch_size
         stop = min((index + 1) * self.batch_size, len(self.data))
         assert start < stop
@@ -61,30 +65,33 @@ class LoadData(Dataset):
 class MorphemeData(LoadData):
     def __init__(self, filename:str, batch_size:int=1000) -> None:
         super(MorphemeData, self).__init__(filename, batch_size)
+        self.num_tags = len(tag_dict) - 1
 
-    def load(self, fn:str) -> List[Tuple[torch.Tensor,...]]:
+    def load(self, fn:str) -> List[Tuple[torch.Tensor,torch.Tensor]]:
         # each line is target\tform\ttags
-        data:List[Tuple[torch.Tensor,...]] = []
+        data:List[Tuple[torch.Tensor,torch.Tensor]] = []
         for idx, line in enumerate(open(fn)):
+            line = line.strip()
             try:
                 lemma, word, tags = line.split('\t')
-                self.data.append((seq2tensor(lemma), 
-                                  seq2tensor(word), 
-                                  tag2tensor(tags)))
-            except:
-                print(f'Trouble parsing morph file on line {idx}')
+                data.append((lemma2tensor(lemma), 
+                             input2tensor(word, tags)))
+
+                #assert all([[j < 135 for j in i] for i in data])
+            except Exception as e:
+                print(f'Trouble parsing morph file on line {idx}: {e}')
         return data
 
 class ProteinData(LoadData):
     def __init__(self, filename:str, batch_size:int=1000):
         super(ProteinData, self).__init__(filename, batch_size)
 
-    def load(self, fn:str) -> List[Tuple[torch.Tensor,...]]:
+    def load(self, fn:str) -> List[Tuple[torch.Tensor,torch.Tensor]]:
         # classes[index] :: list of names for the protein indexed by index
         # each class is a different protein
         # pos is a list of all positive pairs
         self.classes:Dict[int,List[str]] = {}
-        data:List[Tuple] = []
+        data:List[Tuple[torch.Tensor, torch.Tensor]] = []
 
         for idx, line in enumerate(open(fn)):
             prots = [i.strip() for i in line.split('~') if len(i.strip()) > 0]
