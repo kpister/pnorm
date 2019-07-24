@@ -4,6 +4,7 @@ Usage:
 
 Options:
     -h, --help
+    --alpha FLOAT                       set the ratio of losses [default: 0.16]
     --epochs INT                        set number of epochs [default: 20]
     --lr FLOAT                          set the learning rate [default: 0.001]
     --device STR                        set the device [default: cuda:0]
@@ -15,6 +16,7 @@ Options:
     --word_embedding INT                set the size of word embedding [default: 200]
     --layers INT                        set the depth of the encoder [default: 5]
     --batch_size INT                    set the batch size [default: 500]
+    --load                              load a model file [default: False]
     -t, --protein_training FILE         set the input file
     -v, --protein_validation FILE       set the other input file
     -d, --morphology_data FILE          set the last input file
@@ -101,7 +103,7 @@ def train(engine: models.Engine,
                     if dec_input.item() == EOS_token:
                         break
 
-            total_loss += meme_loss / morph_data.batch_size
+            total_loss += meme_loss / morph_data.batch_size * engine.alpha
             morph_epoch_loss += meme_loss.item() / morph_data.batch_size
 
         total_loss.backward(retain_graph=True)
@@ -110,6 +112,22 @@ def train(engine: models.Engine,
         engine.decoder_optim.step() 
 
     return (prot_epoch_loss, morph_epoch_loss)
+
+def evaluate(engine, prot_data):
+    engine.encoder.eval()
+    loss = 0
+
+    with torch.no_grad():
+        for idx in trange(len(prot_data)):
+            x, y = zip(*prot_data[idx])
+            enc_hidden = engine.encoder.initHidden(batch_size=len(x))
+
+            x_embedding, _hs = engine.encoder._forward(x, enc_hidden, data='protein') #type: ignore
+            y_embedding, _hs = engine.encoder._forward(y, enc_hidden, data='protein') #type: ignore
+ 
+            loss += engine.protein_criterion._forward(x_embedding, y_embedding).item()
+    return loss / len(prot_data)
+
 
 if __name__ == '__main__':
     args = docopt(__doc__)
@@ -126,9 +144,15 @@ if __name__ == '__main__':
 
     engine = models.Engine(args)
 
+    best_vloss = 10
+
     for e in range(epochs):
         loss = train(engine=engine, 
                      prot_data=prot_training_data, 
                      morph_data=morph_data)
+        vloss = evaluate(engine, prot_val_data)
+        if vloss < best_vloss:
+            torch.save(engine.encoder.state_dict(), 'best_model.pkl')
 
-        print(f'Epoch {e} complete. Loss: {loss[0]:.4f}, {loss[1]:.4f}')
+        print(f'Epoch {e} complete. Loss: {loss[0]:.4f}, {loss[1]:.4f}\tValidation Loss: {vloss:.4f}')
+

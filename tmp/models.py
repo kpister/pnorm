@@ -37,6 +37,7 @@ class Engine:
         dropout = float(args['--dropout'])
         margin = float(args['--margin'])
 
+        self.alpha = float(args['--alpha'])
         self.device = device(args['--device'])
 
         self.encoder = encoder.EncoderLstm({
@@ -51,6 +52,9 @@ class Engine:
             'dropout': dropout,
             'word_embedding': we
             })
+        
+        if args['--load']:
+            self.encoder.load_state_dict(torch.load('best_model.pkl', map_location=self.device))
 
         self.decoder = AttnDecoderRNN(hidden_size=we,
                                            output_size=in_dim,

@@ -18,7 +18,7 @@ class EncoderLstm(nn.Module):
         self.encoder = opts['encoder']
         non_linear_activation = nn.ReLU() if opts['activation'] == 'relu' else nn.Tanh()
 
-        self.char_embed = nn.Embedding(opts['input_dim'], self.char_embedding_dim
+        self.char_embed = nn.Embedding(opts['input_dim'], self.char_embedding_dim)
 
         #self.prot_embed = nn.GRU(self.char_embedding_dim, self.hidden_dim, self.num_layers, batch_first=True, dropout=opts['dropout'])
         self.prot_embed = nn.LSTM(self.char_embedding_dim, self.hidden_dim, self.num_layers, batch_first=True, bidirectional=self.bidirectional, dropout=opts['dropout'])
