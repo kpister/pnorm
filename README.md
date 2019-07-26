@@ -8,7 +8,7 @@ Work building on my thesis: [Towards Extracting...](...)
 
 - [ ] Hyperparameter exploration
 
-- [ ] Auxilary loss functions
+- [x] Auxilary loss functions
 
 - [ ] Classification task
 

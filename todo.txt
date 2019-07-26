@@ -1,14 +1,8 @@
 -- Hyperparameter Tuning
 explore larger embedded spaces e.g. 400 nodes
-consider attention layer
 experiment with non-linearities. Lots of projects use torch.tanh
 experiment with non-average pooling mechanisms
 add cnn encoder
-try zero weights initially
-
--- Morphology
-Build a lemmatizer
-These take a word and a tag (the form of the word) then predict the morphological variants
 
 -- Misc
 Evaluate on BioCreative III Gene Normalization task
