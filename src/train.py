@@ -1,6 +1,6 @@
 """Train Decoder Architecture
 Usage: 
-    train_decoder.py [options]
+    train.py [options]
 
 Options:
     -h, --help
@@ -18,12 +18,11 @@ Options:
     --batch_size INT                    set the batch size [default: 500]
     --load FILE                         load a model file 
     --teacher_forcing FLOAT             set the teacher forcing ration [default: 0.5]
-    -p, --protein_data PATH             set the input file [default: '']
-    -m, --morphology_data FILE          set the morpheme input file
-    -a, --acronym_data FILE             set the acronym data file
-    --no_morphemes                      turn off the morpheme training [default: False]
-    --no_acronyms                       turn off the acronyms training [default: False]
-    --no_proteins                       turn off the proteins training [default: False]
+    -p, --protein_data PATH             set the input file [default: ]
+    -m, --morpheme_data PATH            set the morpheme input file [default: ]
+    -a, --acronym_data PATH             set the acronym data file [default: ]
+    -r, --paraphrase_data PATH          set the paraphrase data file [default: ]
+    --print_every INT                   how often to print [default: 3]
 """
 
 # personal libs
@@ -38,6 +37,7 @@ from typing import Dict, Any
 import random
 import torch 
 from torch.autograd import Variable
+from torch.nn import functional as F
 from tqdm import trange #type: ignore
 from docopt import docopt #type: ignore
 import hashlib
@@ -46,99 +46,43 @@ import json
 def train(engine: models.Engine, 
           prot_data: dataset.ProteinData, 
           morph_data: dataset.MorphemeData,
-          acro_data: dataset.AcronymData):
+          acro_data: dataset.AcronymData,
+          para_data: dataset.ParaData):
 
-    engine.encoder.train()
-    engine.decoder.train()
+    engine.mSeq2Seq.train()
     prot_epoch_loss:float = 0
     morph_epoch_loss:float = 0
     acro_epoch_loss:float = 0
-    torch.autograd.set_detect_anomaly(True)
+    para_epoch_loss:float = 0
+    morph_data.shuffle()
 
-    for idx in trange(max(len(prot_data), len(morph_data), len(acro_data))):
-        total_loss = torch.tensor([0], dtype=torch.float, device=engine.device)
-
-        engine.encoder_optim.zero_grad()
-        engine.decoder_optim.zero_grad()
-
-        # Train PEN
-        if idx < len(prot_data):
-            x, y = zip(*prot_data[idx])
-            enc_hidden = engine.encoder.initHidden(batch_size=len(x))
-
-            x_embedding, _hs = engine.encoder._forward(x, enc_hidden, data='protein') #type: ignore
-            y_embedding, _hs = engine.encoder._forward(y, enc_hidden, data='protein') #type: ignore
-            prot_loss = engine.protein_criterion._forward(x_embedding, y_embedding)
-            total_loss += prot_loss.view(1).to(engine.device)
-
-            prot_epoch_loss += prot_loss.item() / len(x)
-
-        # Train Morphology, adapted from:
-        # https://github.com/pytorch/tutorials/blob/master/intermediate_source/seq2seq_translation_tutorial.py
+    for idx in trange(max(len(prot_data), len(morph_data), len(acro_data), len(para_data))):
         if idx < len(morph_data):
-            meme_loss = torch.tensor([0], dtype=torch.float, device=engine.device)
-
-            lemma, input_tensor = zip(*morph_data[idx])
+            lemma, src = zip(*morph_data[idx])
             lemma_tensor = torch.stack(lemma).transpose(0,1).to(engine.device)
 
-            enc_hidden = engine.encoder.initHidden(batch_size=len(lemma))
-            enc_out, enc_hidden = engine.encoder._forward_sorted( #type:ignore
-                    input_tensor, hidden=enc_hidden)
+            engine.mOptimizer.zero_grad()
+            output = engine.mSeq2Seq(src, lemma_tensor)
+            mloss = F.nll_loss(output[1:].view(-1, VOCAB_SIZE), lemma_tensor[1:].contiguous().view(-1))
+            mloss.backward()
+            engine.mOptimizer.step()
 
-            # Decode morpheme
-            dec_input = torch.tensor([SOS_token] * len(lemma), device=engine.device)
-            dec_hidden = enc_hidden[0][-1]
+            morph_epoch_loss += mloss.item()
 
-            tf = random.random() < engine.teacher_forcing
-            # Teacher forcing: Feed the target as the next input
-            for di in range(MAX_LENGTH):
-                dec_output, dec_hidden, _ = engine.decoder._forward(dec_input, dec_hidden, enc_out)
-                meme_loss += engine.morpheme_criterion(dec_output, lemma_tensor[di])
+        #torch.cuda.empty_cache()
 
-                if tf:
-                    dec_input = lemma_tensor[di]  # Teacher forcing
-                else:
-                    topv, topi = dec_output.topk(1)
-                    dec_input = topi.squeeze().detach()  # detach from history as input
+    return (prot_epoch_loss, morph_epoch_loss, acro_epoch_loss, para_epoch_loss)
 
-            total_loss += meme_loss / morph_data.batch_size * engine.alpha
-            morph_epoch_loss += meme_loss.item() / morph_data.batch_size
+def fmt(flt):
+    s = str(flt)
+    if 'e' in s:
+        s = '0.0'
+    if len(s) <= 6:
+        return s + ' '*(6-len(s))
+    return s[:6]
 
-        if idx < len(acro_data):
-            acro_loss = torch.tensor([0], dtype=torch.float, device=engine.device)
-
-            acronym, expansion = zip(*acro_data[idx])
-            acro_tensor = torch.stack(acronym).transpose(0,1).to(engine.device)
-
-            enc_hidden = engine.encoder.initHidden(batch_size=len(acronym))
-            enc_out, enc_hidden = engine.encoder._forward_sorted( #type:ignore
-                    expansion, hidden=enc_hidden)
-
-            # Decode morpheme
-            dec_input = torch.tensor([SOS_token] * len(acronym), device=engine.device)
-            dec_hidden = enc_hidden[0][-1]
-
-            tf = random.random() < engine.teacher_forcing
-            # Teacher forcing: Feed the target as the next input
-            for di in range(ACRO_MAX_LENGTH):
-                dec_output, dec_hidden, _ = engine.decoder._forward(dec_input, dec_hidden, enc_out)
-                acro_loss += engine.morpheme_criterion(dec_output, acro_tensor[di])
-
-                if tf:
-                    dec_input = acro_tensor[di]  # Teacher forcing
-                else:
-                    topv, topi = dec_output.topk(1)
-                    dec_input = topi.squeeze().detach()  # detach from history as input
-
-            total_loss += acro_loss / acro_data.batch_size * engine.alpha
-            acro_epoch_loss += acro_loss.item() / acro_data.batch_size
-
-        total_loss.backward()
-        engine.encoder_optim.step()
-        engine.decoder_optim.step() 
-        torch.cuda.empty_cache()
-
-    return (prot_epoch_loss, morph_epoch_loss, acro_epoch_loss)
+def print_results(results, loss, tag):
+    print(f"{tag} results:\t{fmt(loss)}\t{fmt(results['loss'])}\t{fmt(results['auc'])}\t{fmt(results['acc'])}")
 
 if __name__ == '__main__':
     args = docopt(__doc__)
@@ -148,18 +92,22 @@ if __name__ == '__main__':
 
     # save the args of this run
     with open(f'files/{sid}.json', 'w') as w:
-        w.write(json.dumps(args))
+        w.write(json.dumps(args, indent=4, sort_keys=True))
 
     epochs = int(args['--epochs'])
     bs = int(args['--batch_size'])
     best_vloss = 10.
 
-    prot_train_data = dataset.ProteinData(os.path.join(args['--protein_data'], 'train.txt'), batch_size=bs, empty=args['--no_proteins'])
-    prot_val_data   = dataset.ProteinData(os.path.join(args['--protein_data'], 'val.txt'), batch_size=bs, empty=args['--no_proteins'])
-    acronym_data    = dataset.AcronymData(args['--acronym_data'], batch_size=bs, empty=args['--no_acronyms']) 
-    morph_data      = dataset.MorphemeData(args['--morphology_data'], batch_size=bs, empty=args['--no_morphemes']) 
+    shot = 'z' if 'zero_shot' in args['--protein_data'] else 'f'
 
-    args['--input_dim'] = VOCAB_SIZE + morph_data.num_tags
+    prot_train_data = dataset.ProteinData(os.path.join(args['--protein_data'], 'train.txt'), batch_size=bs, empty=args['--protein_data']=='')
+    prot_val_data   = dataset.ProteinData(os.path.join(args['--protein_data'], 'val.txt'), batch_size=bs, empty=args['--protein_data']=='')
+    acronym_data    = dataset.AcronymData(os.path.join(args['--acronym_data'], 'train.txt'), batch_size=bs, empty=args['--acronym_data']=='') 
+    acronym_val_data = dataset.AcronymData(os.path.join(args['--acronym_data'], 'val.txt'), batch_size=bs, empty=args['--acronym_data']=='') 
+    morph_data      = dataset.MorphemeData(os.path.join(args['--morpheme_data'], 'train.txt'), batch_size=bs, empty=args['--morpheme_data']=='') 
+    morph_val_data  = dataset.MorphemeData(os.path.join(args['--morpheme_data'], 'val.txt'), batch_size=bs, empty=args['--morpheme_data']=='') 
+    para_data       = dataset.ParaData(os.path.join(args['--paraphrase_data'], 'train.txt'), batch_size=bs, empty=args['--paraphrase_data']=='') 
+    para_val_data   = dataset.ParaData(os.path.join(args['--paraphrase_data'], 'val.txt'), batch_size=bs, empty=args['--paraphrase_data']=='') 
 
     engine = models.Engine(args)
 
@@ -167,24 +115,34 @@ if __name__ == '__main__':
         loss = train(engine=engine, 
                      prot_data=prot_train_data, 
                      morph_data=morph_data,
-                     acro_data=acronym_data)
+                     acro_data=acronym_data,
+                     para_data=para_data)
 
-        eval_results = evaluate.run(engine, 
-                [('loss', prot_val_data), 
-                 ('acc', morph_data),
-                 ('auc', prot_val_data)]
-                )
-        vloss = eval_results[0]
-        vacc = eval_results[1]
-        vauc = eval_results[2]
+        eval_dict = {'protein': {'data': prot_val_data, 'tests': ['loss', 'auc']}}
+        results = evaluate.run(engine, eval_dict)
 
-        if vloss < best_vloss:
-            torch.save(engine.encoder.state_dict(), f'files/{sid}.pkl')
-            best_vloss = vloss
+        if args['--protein_data']=='' or results['protein']['loss'] < best_vloss: 
+            #torch.save(engine.encoder.state_dict(), f'files/{sid}.encoder.pkl')
+            torch.save(engine.mSeq2Seq.state_dict(), f'files/{sid}.morpheme.pkl')
+            #torch.save(engine.acro_decoder.state_dict(), f'files/{sid}.adecoder.pkl')
+            #torch.save(engine.para_decoder.state_dict(), f'files/{sid}.adecoder.pkl')
+            best_vloss = results['protein']['loss']
 
-        print(f'Epoch {e} complete. Protein, Morph, Acron,\tValidation\tMorph Acc\tAUC')
-        print(f'Epoch {e} complete. {loss[0]:.4f}, {loss[1]:.4f}, {loss[2]:.4f}\t{vloss:.4f}\t\t{vacc:.4f}\t\t{vauc:.4f}')
+        if (e + 1) % int(args['--print_every']) == 0:
+            eval_dict = {
+                    'morpheme': {'data': morph_val_data, 'tests': ['acc']}
+                    #'protein': {'data': prot_val_data, 'tests': ['loss', 'auc']},
+                    #'paraphrase': {'data': para_val_data, 'tests': ['loss', 'acc']},
+                    #'acronym': {'data': acronym_val_data, 'tests': ['loss', 'acc']}
+                    }
+            results = evaluate.run(engine, eval_dict)
 
-        with open('scoreboard.txt', 'a') as w:
-            w.write(f"{sid},{vauc:.4f},{vloss:.4f},0.0,0.0\n")
+            print(f'Epoch {e:02d} done.    \tTrain, \tValid.,\tV. AUC,\tV. Acc.')
+            #print_results(results, loss=loss[0], tag='protein')
+            print_results(results['morpheme'], loss=loss[1], tag='morpheme')
+            #print_results(results, loss=loss[2], tag='acronym')
+            #print_results(results, loss=loss[3], tag='paraphrase')
+
+        #with open('scoreboard.txt', 'a') as w:
+            #w.write(f"{shot}{sid},{results['protein']['auc']:.4f},{results['protein']['loss']:.4f},0.0,0.0\n")
 

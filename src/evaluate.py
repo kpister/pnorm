@@ -7,11 +7,12 @@ import models
 import evaluate
 import dataset
 
+from torch.nn import functional as F
 import random
 from docopt import docopt
 import sklearn.metrics as metrics #type: ignore
 import torch
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 from constants import *
 import json
 import os
@@ -24,23 +25,24 @@ def l2norm(X):
     X[X != X] = 0 # remove nan
     return X
 
-def run(engine, cmds:List[Tuple]) -> List[float]:
-    ret = []
+def run(engine, cmds:Dict[str, Dict]) -> Dict[str, Dict]:
+    ret = {}
 
-    for k,v in cmds:
-        if k == 'loss':
-            ret.append(loss(engine, v))
-        if k == 'acc':
-            racc, rdist = acc(engine, v)
-            ret.append(racc)
-        if k == 'auc':
-            ret.append(auc(engine, v))
-        print('Evaluating  \t' + '\t'.join([f'{r:.4f}' for r in ret]), end='\r')
+    for k,v in cmds.items():
+        ret[k] = {'loss': 0., 'acc': 0., 'auc': 0.}
+        for test in v['tests']:
+            if test == 'loss':
+                ret[k]['loss'] = loss(engine, v['data'])
+            if test == 'acc':
+                ret[k]['acc'], _, ret[k]['loss'] = acc(engine, v['data'], k)
+            if test == 'auc':
+                ret[k]['auc'] = auc(engine, v['data'])
+    print(' ' * 75, end='\r')
     return ret
 
 def loss(engine, data):
     if len(data) == 0:
-        return 0
+        return 0.
 
     engine.encoder.eval()
     loss = 0
@@ -61,44 +63,38 @@ def loss(engine, data):
 def tensor2word(t:torch.Tensor) -> str:
     return ''.join([chr(i) if i > 41 else ' ' for i in t])
 
-def acc(engine, data):
+def acc(engine, data, dtype):
     if len(data) == 0:
-        return 0
+        return 0.,0., 0.
 
-    engine.encoder.eval()
-    engine.decoder.eval()
+    if dtype == 'acronym':
+        dec = engine.acro_decoder
+        LENGTH = ACRO_MAX_LENGTH
+    elif dtype == 'morpheme':
+        model = engine.mSeq2Seq
+        LENGTH = MAX_LENGTH
+    elif dtype == 'paraphrase':
+        dec = engine.para_decoder
+        LENGTH = PARA_MAX_LENGTH
+
+    model.eval()
 
     total = 0
     correct = 0
     distance = 0
+    loss = 0
 
     with torch.no_grad():
         for idx in range(len(data)):
-            lemma, input_tensor = zip(*data[idx])
-            lemma_tensor = torch.stack(lemma).transpose(0,1).to(engine.device)
+            trg, src = zip(*data[idx])
+            ttensor = torch.stack(trg).transpose(0,1).to(engine.device)
 
-            enc_hidden = engine.encoder.initHidden(batch_size=len(input_tensor))
-            enc_out, enc_hidden = engine.encoder._forward_sorted( #type:ignore
-                    input_tensor, hidden=enc_hidden)
+            output = engine.mSeq2Seq(src, ttensor)
+            loss += F.nll_loss(output[1:].view(-1,VOCAB_SIZE), ttensor[1:].contiguous().view(-1))
 
-            # Decode morpheme
-            dec_input = torch.tensor([SOS_token] * len(lemma), device=engine.device)
-            dec_hidden = enc_hidden[0][-1]
-
-            word_builder = torch.zeros((MAX_LENGTH, len(lemma)), device=engine.device)
-            # use its own predictions as the next input
-            for di in range(MAX_LENGTH):
-                dec_output, dec_hidden, _ = engine.decoder._forward(
-                    dec_input, dec_hidden, enc_out)
-                topv, topi = dec_output.topk(1)
-                dec_input = topi.squeeze().detach()  # detach from history as input
-                word_builder[di] = dec_input
-
-            word_builder = word_builder.transpose(0,1).long()
-            lemma_tensor = lemma_tensor.transpose(0,1)
-            for true, gen in zip(lemma_tensor, word_builder):
-                if random.random() < 0.001:
-                    print(f'{tensor2word(true)}:{tensor2word(gen)}')
+            for true, gen in zip(ttensor.transpose(0,1), torch.argmax(output, 2).transpose(0,1)):
+                #if random.random() < 0.001:
+                    #print(f'{tensor2word(true)}:{tensor2word(gen)}')
                 # This is currently strict equality
                 # TODO consider equality up to first EOS_token
                 if all(true == gen): 
@@ -109,11 +105,11 @@ def acc(engine, data):
 
             print(f'Evaluating {spin[idx%4]}', end='\r')
 
-    return correct / total, distance / total
+    return correct / total, distance / total, loss.item()
 
 def auc(engine, data):
     if len(data) == 0:
-        return 0
+        return 0.
 
     resolution = 100
     min_distance = 0

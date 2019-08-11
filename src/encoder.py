@@ -37,7 +37,7 @@ class EncoderLstm(nn.Module):
         # gru
         #return Variable(torch.randn(self.num_layers, batch_size, self.hidden_dim)).to(self.device)
 
-    def _forward_sorted(self, x:List[torch.Tensor], hidden:Tuple[torch.Tensor, torch.Tensor], data='None') -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    def forward(self, x:List[torch.Tensor], hidden:Tuple[torch.Tensor, torch.Tensor], data='None') -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
         sat = [self.char_embed(p.to(self.device)) for p in x]
         packed = self.pad_and_pack_batch_u(sat)
         output, hidden = self.prot_embed(packed.to(self.device), hidden)
@@ -67,9 +67,7 @@ class EncoderLstm(nn.Module):
         out = torch.mean(out, 1)
         #out = torch.argmax(out, 1)
 
-        # cuda 9.2 error
-        try: x_ = self.fc(out)
-        except: x_ = self.fc(out)
+        x_ = self.fc(out)
 
         # resort
         for i, v in enumerate(x_):

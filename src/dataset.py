@@ -8,7 +8,7 @@ from constants import *
 from typing import List, Tuple, Dict
 
 tag_dict:Dict[str,int] = {}
-tag_dict['end'] = VOCAB_SIZE
+tag_dict['end'] = 2
 
 def pad(tensor, size):
     return torch.cat((tensor, torch.tensor([EOS_token]*(size - tensor.size(0)), dtype=torch.long)))
@@ -68,7 +68,32 @@ class LoadData(Dataset):
         stop = min((index + 1) * self.batch_size, len(self.data))
         assert start < stop
 
+        #TODO return padded data and length values
         return sorted(self.data[start:stop], key=lambda v: len(v[1]), reverse=True)
+
+class ParaData(LoadData):
+    def __init__(self, filename:str, batch_size:int=1000, empty=False) -> None:
+        super(ParaData, self).__init__(filename, batch_size, empty)
+        self.max_length = 500
+
+    def load(self, fn:str) -> List[Tuple[torch.Tensor,torch.Tensor]]:
+        data:List[Tuple[torch.Tensor,torch.Tensor]] = []
+        for idx, line in enumerate(open(fn)):
+            line = line.strip()
+            try:
+                s = [i.strip() for i in line.split('|||')]
+                tag, p1, p2 = s[0], s[1], s[2]
+                data.append((pad(target2tensor(p1), PARA_MAX_LENGTH),
+                             seq2tensor(p2)))
+            except Exception as e:
+                print(f'Trouble parsing Paraphrase file on line {idx}: {e}')
+
+            if idx > 100000:
+                break
+        return data
+    
+    def __len__(self):
+        return min(self.max_length, super(ParaData, self).__len__())
 
 class AcronymData(LoadData):
     def __init__(self, filename:str, batch_size:int=1000, empty=False) -> None:
@@ -100,7 +125,7 @@ class MorphemeData(LoadData):
             line = line.strip()
             try:
                 lemma, word, tags = line.split('\t')
-                data.append((pad(target2tensor(lemma), MAX_LENGTH), 
+                data.append((pad(seq2tensor(lemma), MAX_LENGTH), 
                              input2tensor(word, tags)))
 
             except Exception as e:
