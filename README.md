@@ -10,8 +10,6 @@ Work building on my thesis: [Towards Extracting...](...)
 
 - [x] Auxilary loss functions
 
-- [ ] Classification task
-
 - [ ] Start reworking paper
 
 ### Tags

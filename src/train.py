@@ -43,33 +43,65 @@ from docopt import docopt #type: ignore
 import hashlib
 import json
 
+def invert(ls, ordering):
+    output = torch.empty_like(ls)
+    for i, ridx in enumerate(ordering):
+        output[ridx] = ls[i]
+    return output
+
 def train(engine: models.Engine, 
           prot_data: dataset.ProteinData, 
           morph_data: dataset.MorphemeData,
           acro_data: dataset.AcronymData,
           para_data: dataset.ParaData):
 
-    engine.mSeq2Seq.train()
+    if len(prot_data) > 0:
+        engine.pEncoder.train()
+        prot_data.shuffle()
+    if len(morph_data) > 0:
+        engine.mSeq2Seq.train()
+        morph_data.shuffle()
+
     prot_epoch_loss:float = 0
     morph_epoch_loss:float = 0
     acro_epoch_loss:float = 0
     para_epoch_loss:float = 0
-    morph_data.shuffle()
 
-    for idx in trange(max(len(prot_data), len(morph_data), len(acro_data), len(para_data))):
+    for idx in trange(max(len(prot_data), len(morph_data), len(acro_data))):
+        loss = torch.tensor([0.0]).to(engine.device)
+        if idx < len(prot_data):
+            x, x_lens, x_ord, y, y_lens, y_ord = prot_data[idx]
+
+            engine.pOptimizer.zero_grad()
+            hidden = engine.pEncoder.initHidden(x.size(0))
+            x_enc, hid = engine.pEncoder(x.to(engine.device), x_lens, hidden, norm=True)
+            y_enc, hid = engine.pEncoder(y.to(engine.device), y_lens, hidden, norm=True)
+
+            x_enc = invert(x_enc, x_ord)
+            y_enc = invert(y_enc, y_ord)
+            ploss = engine.pLoss._forward(x_enc, y_enc)
+
+            loss += ploss
+            prot_epoch_loss += ploss.item()
+
         if idx < len(morph_data):
-            lemma, src = zip(*morph_data[idx])
-            lemma_tensor = torch.stack(lemma).transpose(0,1).to(engine.device)
+            lemma, _, src, src_len = morph_data[idx]
+            lemma = lemma.transpose(0,1).to(engine.device)
+            src = src.to(engine.device)
+            src_len = src_len.to(engine.device)
 
             engine.mOptimizer.zero_grad()
-            output = engine.mSeq2Seq(src, lemma_tensor)
-            mloss = F.nll_loss(output[1:].view(-1, VOCAB_SIZE), lemma_tensor[1:].contiguous().view(-1))
-            mloss.backward()
-            engine.mOptimizer.step()
+            output = engine.mSeq2Seq(src, src_len, lemma)
+            mloss = F.nll_loss(output[1:].view(-1, VOCAB_SIZE), lemma[1:].contiguous().view(-1))
 
+            loss += mloss
             morph_epoch_loss += mloss.item()
 
-        #torch.cuda.empty_cache()
+        loss.backward()
+        if idx < len(prot_data):
+            engine.pOptimizer.step()
+        if idx < len(morph_data):
+            engine.mOptimizer.step() 
 
     return (prot_epoch_loss, morph_epoch_loss, acro_epoch_loss, para_epoch_loss)
 
@@ -122,27 +154,29 @@ if __name__ == '__main__':
         results = evaluate.run(engine, eval_dict)
 
         if args['--protein_data']=='' or results['protein']['loss'] < best_vloss: 
-            #torch.save(engine.encoder.state_dict(), f'files/{sid}.encoder.pkl')
-            torch.save(engine.mSeq2Seq.state_dict(), f'files/{sid}.morpheme.pkl')
+            if len(prot_train_data) > 0:
+                torch.save(engine.pEncoder.state_dict(), f'files/{sid}.protein.pkl')
+            if len(morph_data) > 0:
+                torch.save(engine.mSeq2Seq.state_dict(), f'files/{sid}.morpheme.pkl')
             #torch.save(engine.acro_decoder.state_dict(), f'files/{sid}.adecoder.pkl')
             #torch.save(engine.para_decoder.state_dict(), f'files/{sid}.adecoder.pkl')
             best_vloss = results['protein']['loss']
 
         if (e + 1) % int(args['--print_every']) == 0:
             eval_dict = {
-                    'morpheme': {'data': morph_val_data, 'tests': ['acc']}
-                    #'protein': {'data': prot_val_data, 'tests': ['loss', 'auc']},
+                    'morpheme': {'data': morph_val_data, 'tests': ['acc']},
+                    'protein': {'data': prot_val_data, 'tests': ['loss', 'auc']},
                     #'paraphrase': {'data': para_val_data, 'tests': ['loss', 'acc']},
                     #'acronym': {'data': acronym_val_data, 'tests': ['loss', 'acc']}
                     }
             results = evaluate.run(engine, eval_dict)
 
             print(f'Epoch {e:02d} done.    \tTrain, \tValid.,\tV. AUC,\tV. Acc.')
-            #print_results(results, loss=loss[0], tag='protein')
+            print_results(results['protein'], loss=loss[0], tag='protein')
             print_results(results['morpheme'], loss=loss[1], tag='morpheme')
             #print_results(results, loss=loss[2], tag='acronym')
             #print_results(results, loss=loss[3], tag='paraphrase')
 
-        #with open('scoreboard.txt', 'a') as w:
-            #w.write(f"{shot}{sid},{results['protein']['auc']:.4f},{results['protein']['loss']:.4f},0.0,0.0\n")
+        with open('scoreboard.txt', 'a') as w:
+            w.write(f"{shot}{sid},{results['protein']['auc']:.4f},{results['protein']['loss']:.4f},0.0,0.0\n")
 

@@ -4,6 +4,9 @@ experiment with non-linearities. Lots of projects use torch.tanh
 experiment with non-average pooling mechanisms
 add cnn encoder
 
+-- Morphemes
+Use Pointer Generator Decoder
+
 -- Misc
 Evaluate on BioCreative III Gene Normalization task
 Evaluate on BioCreative II Gene Normalization task

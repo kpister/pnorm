@@ -56,16 +56,24 @@ class Engine:
             'dropout': dropout,
             'word_embedding': we
             })
-        #if args['--load']:
-            #self.encoder.load_state_dict(torch.load(f"files/{args['--load']}.encoder.pkl", map_location=self.device))
-        
-        #self.morpheme_encoder = ss.Encoder(in_dim, we, hs)
-        #self.morpheme_decoder = AttnDecoderRNN(embedding_size=we, hidden_size=hs, vocab_size=in_dim, dropout_p=dropout, device=self.device)
+
+        if args['--protein_data'] != '':
+            self.pEncoder = self.encoder
+            if args['--load']:
+                self.pEncoder.load_state_dict(torch.load(f"files/{args['--load']}.protein.pkl", map_location=self.device))
+
+            self.pEncoder = self.pEncoder.to(self.device)
+            self.pLoss = loss.SimilarityLoss(margin=margin)
+            self.pOptimizer = optim.Adam(self.encoder.parameters(), lr=lr)
+
         if args['--morpheme_data'] != '':
             morpheme_decoder = ss.Decoder(embed_size=we, hidden_size=hs, output_size=in_dim)
             self.mSeq2Seq = ss.Seq2Seq(self.encoder, morpheme_decoder, self.device)
             if args['--load']:
                 self.mSeq2Seq.load_state_dict(torch.load(f"files/{args['--load']}.morpheme.pkl", map_location=self.device))
+
+            self.mSeq2Seq.to(self.device)
+            self.mOptimizer = optim.Adam(self.mSeq2Seq.parameters(), lr=lr)
 
         #self.acro_decoder = AttnDecoderRNN(embedding_size=we, hidden_size=hs, vocab_size=in_dim, dropout_p=dropout, device=self.device)
         #if args['--load']:
@@ -76,17 +84,12 @@ class Engine:
             #self.para_decoder.load_state_dict(torch.load(f"files/{args['--load']}.adecoder.pkl", map_location=self.device))
 
  
-        #self.encoder.to(self.device)
-        self.mSeq2Seq.to(self.device)
         #self.acro_decoder.to(self.device)
         #self.para_decoder.to(self.device)
 
-        #self.encoder_optim = optim.Adam(self.encoder.parameters(), lr=lr)
-        self.mOptimizer = optim.Adam(self.mSeq2Seq.parameters(), lr=lr)
         #self.acro_decoder_optim = optim.Adam(self.acro_decoder.parameters(), lr=lr)
         #self.para_decoder_optim = optim.Adam(self.para_decoder.parameters(), lr=lr)
 
-        #self.protein_criterion = loss.SimilarityLoss(margin=margin)
         #self.morpheme_criterion = loss.MorphemeLoss()
 
 class Attention(nn.Module):

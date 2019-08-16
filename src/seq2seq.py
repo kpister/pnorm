@@ -94,14 +94,14 @@ class Seq2Seq(nn.Module):
         self.decoder = decoder
         self.device = device
 
-    def forward(self, src, trg, teacher_forcing_ratio=0.5):
-        batch_size = len(src)
+    def forward(self, src, src_len, trg, teacher_forcing_ratio=0.5):
+        batch_size = src.size(0)
         max_len = trg.size(0)
         vocab_size = self.decoder.output_size
         outputs = Variable(torch.zeros(max_len, batch_size, vocab_size)).to(self.device)
 
         hidden = self.encoder.initHidden(batch_size)
-        encoder_output, hidden = self.encoder(src, hidden)
+        encoder_output, hidden = self.encoder(src, src_len, hidden, norm=False)
         hidden = hidden[0][:self.decoder.n_layers]
         output = Variable(trg.data[0, :])  # sos
         for t in range(1, max_len):

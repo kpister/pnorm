@@ -26,7 +26,7 @@ class EncoderLstm(nn.Module):
         
         self.fc = nn.Sequential(
                 nn.Dropout(opts['dropout']),
-                nn.Linear(self.hidden_dim*(1+self.bidirectional), opts['word_embedding']),
+                nn.Linear(self.hidden_dim, opts['word_embedding']),
                 non_linear_activation)
 
     def initHidden(self, batch_size):
@@ -37,66 +37,13 @@ class EncoderLstm(nn.Module):
         # gru
         #return Variable(torch.randn(self.num_layers, batch_size, self.hidden_dim)).to(self.device)
 
-    def forward(self, x:List[torch.Tensor], hidden:Tuple[torch.Tensor, torch.Tensor], data='None') -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        sat = [self.char_embed(p.to(self.device)) for p in x]
-        packed = self.pad_and_pack_batch_u(sat)
-        output, hidden = self.prot_embed(packed.to(self.device), hidden)
-        outputs, output_lens = pad_packed_sequence(output,batch_first=True)
+    # Forward for traditional embedding (ordered in descending length)
+    def forward(self, x:torch.Tensor, x_len, hidden:Tuple[torch.Tensor, torch.Tensor], norm=False) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        packed = pack_padded_sequence(self.char_embed(x), x_len, batch_first=True)
+        output, hidden = self.prot_embed(packed, hidden)
+        outputs, _ = pad_packed_sequence(output,batch_first=True)
+        # sum bidirectional outputs
         outputs = outputs[:, :, :self.hidden_dim] + outputs[:, : ,self.hidden_dim:]
-        if outputs.shape[1] != MAX_LENGTH:
-            try:
-                outputs = torch.cat((outputs, torch.zeros((outputs.shape[0], MAX_LENGTH-outputs.shape[1], outputs.shape[2]), device=self.device)), dim=1)
-            except:
-                import pdb;pdb.set_trace()
-                print(outputs.shape)
+        if norm:
+            outputs = self.fc(torch.mean(outputs, 1))
         return outputs, hidden
-
-
-    def _forward(self, x:List[torch.Tensor], hidden:Tuple[torch.Tensor, torch.Tensor], data='None') -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
-        # use satellite numbers to sort and then resort
-        sat = sorted([[self.char_embed(p.to(self.device)),i] for i, p in enumerate(x)],
-                       key=lambda v:v[0].shape[0], reverse=True)
-
-        # encode
-        encoder_out, hs = self.prot_embed(self.pad_and_pack_batch(sat).to(self.device), hidden)
-
-        # unpack sequences
-        out, _ = pad_packed_sequence(encoder_out, batch_first=True)
-
-        # Use lstm_out average or max pooling?
-        out = torch.mean(out, 1)
-        #out = torch.argmax(out, 1)
-
-        x_ = self.fc(out)
-
-        # resort
-        for i, v in enumerate(x_):
-            sat[i][0] = v
-
-        return torch.stack([i[0] for i in sorted(sat, key=lambda v:v[1])]), hs
-
-    def pad_and_pack_batch_u(self, sat):
-        # size: batch_size
-        seq_lengths = torch.LongTensor(list(map(len, sat))).to(self.device)
-        
-        # size: batch_size x longest_seq x vocab_size
-        seq_tensor = Variable(torch.zeros((len(sat), seq_lengths.max(), self.char_embedding_dim))).to(self.device)
-
-        for idx, seqlen in enumerate(seq_lengths):
-            seq_tensor[idx, :seqlen, :] = sat[idx]
-
-        # size = longest_seq x batch_size x vocab_size
-        return pack_padded_sequence(seq_tensor, seq_lengths, batch_first=True)
-
-    def pad_and_pack_batch(self, sat):
-        # size: batch_size
-        seq_lengths = torch.LongTensor(list(map(lambda x: len(x[0]), sat))).to(self.device)
-        
-        # size: batch_size x longest_seq x vocab_size
-        seq_tensor = Variable(torch.zeros((len(sat), seq_lengths.max(), self.char_embedding_dim))).to(self.device)
-
-        for idx, seqlen in enumerate(seq_lengths):
-            seq_tensor[idx, :seqlen, :] = sat[idx][0]
-
-        # size = longest_seq x batch_size x vocab_size
-        return pack_padded_sequence(seq_tensor, seq_lengths, batch_first=True)

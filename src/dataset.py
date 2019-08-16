@@ -4,6 +4,7 @@ import torch #type: ignore
 import random
 from torch.utils.data import Dataset #type: ignore
 from constants import *
+from torch.nn.utils.rnn import pad_sequence
 
 from typing import List, Tuple, Dict
 
@@ -68,8 +69,18 @@ class LoadData(Dataset):
         stop = min((index + 1) * self.batch_size, len(self.data))
         assert start < stop
 
-        #TODO return padded data and length values
-        return sorted(self.data[start:stop], key=lambda v: len(v[1]), reverse=True)
+        left_max_len = max(self.data[start:stop], key=lambda v: len(v[0]))[0].size(0)
+        right_max_len = max(self.data[start:stop], key=lambda v: len(v[1]))[1].size(0)
+
+        left, right = [], []
+        left_lens, right_lens = [], []
+        for l, r in sorted(self.data[start:stop], key=lambda v: len(v[1]), reverse=True):
+            left.append(pad(l, left_max_len))
+            right.append(pad(r, right_max_len))
+            left_lens.append(l.size(0))
+            right_lens.append(r.size(0))
+
+        return torch.stack(left), torch.tensor(left_lens), torch.stack(right), torch.tensor(right_lens)
 
 class ParaData(LoadData):
     def __init__(self, filename:str, batch_size:int=1000, empty=False) -> None:
@@ -125,7 +136,7 @@ class MorphemeData(LoadData):
             line = line.strip()
             try:
                 lemma, word, tags = line.split('\t')
-                data.append((pad(seq2tensor(lemma), MAX_LENGTH), 
+                data.append((seq2tensor(lemma), 
                              input2tensor(word, tags)))
 
             except Exception as e:
@@ -160,4 +171,60 @@ class ProteinData(LoadData):
             p1.append(seq2tensor(self.classes[leader][0]))
             p2.append(seq2tensor(random.choice(self.classes[follow][1:])))
 
-        return p1, p2
+        left_max_len = max(p1, key=lambda v: len(v)).size(0)
+        right_max_len = max(p2, key=lambda v: len(v)).size(0)
+
+        left, right = [], []
+        left_lens, right_lens = [], []
+        left_ord = []
+        left_tmp = []
+
+        # sort by right hand side
+        i = 0
+        for l, r in sorted(zip(p1,p2), key=lambda v: v[1].size(0), reverse=True):
+            left_tmp.append((l, i))
+            right.append(pad(r, right_max_len))
+            right_lens.append(r.size(0))
+            i += 1
+
+        # sort by left hand side
+        for l, i in sorted(left_tmp, key=lambda v: len(v[0]), reverse=True):
+            left.append(pad(l, left_max_len))
+            left_ord.append(i)
+            left_lens.append(l.size(0))
+
+
+        return torch.stack(left), torch.tensor(left_lens), left_ord, torch.stack(right), torch.tensor(right_lens), [i for i in right]
+
+
+
+    # get a batch of data, size of batch is determined by batch_size
+    def __getitem__(self, index:int) -> List[Tuple[torch.Tensor,torch.Tensor]]:
+        start = index * self.batch_size
+        stop = min((index + 1) * self.batch_size, len(self.data))
+        assert start < stop
+
+        left_max_len = max(self.data[start:stop], key=lambda v: len(v[0]))[0].size(0)
+        right_max_len = max(self.data[start:stop], key=lambda v: len(v[1]))[1].size(0)
+
+        left, right = [], []
+        left_lens, right_lens = [], []
+        left_ord = []
+        left_tmp = []
+
+        # sort by right hand side
+        i = 0
+        for l, r in sorted(self.data[start:stop], key=lambda v: len(v[1]), reverse=True):
+            left_tmp.append((l, i))
+            right.append(pad(r, right_max_len))
+            right_lens.append(r.size(0))
+            i += 1
+
+        # sort by left hand side
+        for l, i in sorted(left_tmp, key=lambda v: len(v[0]), reverse=True):
+            left.append(pad(l, left_max_len))
+            left_ord.append(i)
+            left_lens.append(l.size(0))
+
+
+        return torch.stack(left), torch.tensor(left_lens), left_ord, torch.stack(right), torch.tensor(right_lens), [i for i in range(len(right))]

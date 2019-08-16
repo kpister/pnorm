@@ -19,6 +19,12 @@ import os
 
 spin = ['|', '/', '-', '\\']
 
+def invert(ls, ordering):
+    output = torch.empty_like(ls)
+    for i, ridx in enumerate(ordering):
+        output[ridx] = ls[i]
+    return output
+
 def l2norm(X):
     norm = torch.pow(X, 2).sum(dim=1, keepdim=True).sqrt()
     X = torch.div(X, norm)
@@ -44,18 +50,20 @@ def loss(engine, data):
     if len(data) == 0:
         return 0.
 
-    engine.encoder.eval()
+    engine.pEncoder.eval()
     loss = 0
 
     with torch.no_grad():
         for idx in range(len(data)):
-            x, y = zip(*data[idx])
-            enc_hidden = engine.encoder.initHidden(batch_size=len(x))
+            x, x_lens, x_ord, y, y_lens, y_ord = data[idx]
+            hidden = engine.pEncoder.initHidden(x.size(0))
+            x_enc, hid = engine.pEncoder(x.to(engine.device), x_lens, hidden, norm=True)
+            y_enc, hid = engine.pEncoder(y.to(engine.device), y_lens, hidden, norm=True)
 
-            x_embedding, _hs = engine.encoder._forward(x, enc_hidden)
-            y_embedding, _hs = engine.encoder._forward(y, enc_hidden)
+            x_enc = invert(x_enc, x_ord)
+            y_enc = invert(y_enc, y_ord)
  
-            loss += engine.protein_criterion._forward(x_embedding, y_embedding).item()
+            loss += engine.pLoss._forward(x_enc, y_enc).item()
             print(f'Evaluating {spin[idx%4]}', end='\r')
 
     return loss / len(data)
@@ -86,13 +94,15 @@ def acc(engine, data, dtype):
 
     with torch.no_grad():
         for idx in range(len(data)):
-            trg, src = zip(*data[idx])
-            ttensor = torch.stack(trg).transpose(0,1).to(engine.device)
+            trg, _ , src, src_len = data[idx]
+            trg = trg.transpose(0,1).to(engine.device)
+            src = src.to(engine.device)
+            src_len = src_len.to(engine.device)
 
-            output = engine.mSeq2Seq(src, ttensor)
-            loss += F.nll_loss(output[1:].view(-1,VOCAB_SIZE), ttensor[1:].contiguous().view(-1))
+            output = engine.mSeq2Seq(src, src_len, trg)
+            loss += F.nll_loss(output[1:].view(-1,VOCAB_SIZE), trg[1:].contiguous().view(-1))
 
-            for true, gen in zip(ttensor.transpose(0,1), torch.argmax(output, 2).transpose(0,1)):
+            for true, gen in zip(trg.transpose(0,1), torch.argmax(output, 2).transpose(0,1)):
                 #if random.random() < 0.001:
                     #print(f'{tensor2word(true)}:{tensor2word(gen)}')
                 # This is currently strict equality
@@ -122,14 +132,16 @@ def auc(engine, data):
     engine.encoder.eval()
     with torch.no_grad():
         for idx in range(len(data)):
-            x, y = zip(*data[idx])
+            x, x_lens, x_ord, y, y_lens, y_ord = data[idx]
+            hidden = engine.pEncoder.initHidden(x.size(0))
+            x_enc, hid = engine.pEncoder(x.to(engine.device), x_lens, hidden, norm=True)
+            y_enc, hid = engine.pEncoder(y.to(engine.device), y_lens, hidden, norm=True)
 
-            enc_hidden = engine.encoder.initHidden(batch_size=len(x))
-            x_embedding, _hs = engine.encoder._forward(x, enc_hidden)
-            y_embedding, _hs = engine.encoder._forward(y, enc_hidden)
+            x_enc = invert(x_enc, x_ord)
+            y_enc = invert(y_enc, y_ord)
 
             #euclidean distance
-            dist = torch.norm(y_embedding.sub(x_embedding), dim=1)
+            dist = torch.norm(y_enc.sub(x_enc), dim=1)
             #cosine similarity
             #dist = torch.nn.functional.cosine_similarity(l2norm(x_embedding), l2norm(y_embedding))
 
@@ -138,11 +150,16 @@ def auc(engine, data):
                 true_pos_buckets[drop] += len(dist[dist<drop*increments])
 
             # Negative testing
-            x, y = data.get_neg(len(x))
-            x_embedding, _hs = engine.encoder._forward(x, enc_hidden)
-            y_embedding, _hs = engine.encoder._forward(y, enc_hidden)
+            x, x_lens, x_ord, y, y_lens, y_ord = data.get_neg(x.size(0))
 
-            dist = torch.norm(y_embedding.sub(x_embedding), dim=1)
+            hidden = engine.pEncoder.initHidden(x.size(0))
+            x_enc, hid = engine.pEncoder(x.to(engine.device), x_lens, hidden, norm=True)
+            y_enc, hid = engine.pEncoder(y.to(engine.device), y_lens, hidden, norm=True)
+
+            x_enc = invert(x_enc, x_ord)
+            y_enc = invert(y_enc, y_ord)
+
+            dist = torch.norm(y_enc.sub(x_enc), dim=1)
 
             for drop in range(resolution):
                 true_neg_buckets[drop] += len(dist[dist>=drop*increments])
