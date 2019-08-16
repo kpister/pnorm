@@ -28,7 +28,7 @@ Options:
 # personal libs
 from constants import *
 import evaluate
-import models
+import engine as eng
 import dataset
 
 # other libs
@@ -114,7 +114,12 @@ def fmt(flt):
     return s[:6]
 
 def print_results(results, loss, tag):
-    print(f"{tag} results:\t{fmt(loss)}\t{fmt(results['loss'])}\t{fmt(results['auc'])}\t{fmt(results['acc'])}")
+    if loss == 0:
+        out = f"{fmt(0)}\t{fmt(0)}\t{fmt(0)}\t{fmt(0)}"
+    else:
+        out = f"{fmt(loss)}\t{fmt(results['loss'])}\t{fmt(results['auc'])}\t{fmt(results['acc'])}"
+    print(f"{tag} results:\t{out}")
+    return out + "\t"
 
 if __name__ == '__main__':
     args = docopt(__doc__)
@@ -132,7 +137,7 @@ if __name__ == '__main__':
 
     shot = 'z' if 'zero_shot' in args['--protein_data'] else 'f'
 
-    prot_train_data = dataset.ProteinData(os.path.join(args['--protein_data'], 'train.txt'), batch_size=bs, empty=args['--protein_data']=='')
+    prot_data       = dataset.ProteinData(os.path.join(args['--protein_data'], 'train.txt'), batch_size=bs, empty=args['--protein_data']=='')
     prot_val_data   = dataset.ProteinData(os.path.join(args['--protein_data'], 'val.txt'), batch_size=bs, empty=args['--protein_data']=='')
     acronym_data    = dataset.AcronymData(os.path.join(args['--acronym_data'], 'train.txt'), batch_size=bs, empty=args['--acronym_data']=='') 
     acronym_val_data = dataset.AcronymData(os.path.join(args['--acronym_data'], 'val.txt'), batch_size=bs, empty=args['--acronym_data']=='') 
@@ -141,11 +146,11 @@ if __name__ == '__main__':
     para_data       = dataset.ParaData(os.path.join(args['--paraphrase_data'], 'train.txt'), batch_size=bs, empty=args['--paraphrase_data']=='') 
     para_val_data   = dataset.ParaData(os.path.join(args['--paraphrase_data'], 'val.txt'), batch_size=bs, empty=args['--paraphrase_data']=='') 
 
-    engine = models.Engine(args)
+    engine = eng.Engine(args)
 
     for e in range(epochs):
         loss = train(engine=engine, 
-                     prot_data=prot_train_data, 
+                     prot_data=prot_data, 
                      morph_data=morph_data,
                      acro_data=acronym_data,
                      para_data=para_data)
@@ -153,30 +158,35 @@ if __name__ == '__main__':
         eval_dict = {'protein': {'data': prot_val_data, 'tests': ['loss', 'auc']}}
         results = evaluate.run(engine, eval_dict)
 
+        # short circuit the or on empty proteins
         if args['--protein_data']=='' or results['protein']['loss'] < best_vloss: 
-            if len(prot_train_data) > 0:
+            if len(prot_data) > 0:
                 torch.save(engine.pEncoder.state_dict(), f'files/{sid}.protein.pkl')
+                best_vloss = results['protein']['loss']
             if len(morph_data) > 0:
                 torch.save(engine.mSeq2Seq.state_dict(), f'files/{sid}.morpheme.pkl')
-            #torch.save(engine.acro_decoder.state_dict(), f'files/{sid}.adecoder.pkl')
-            #torch.save(engine.para_decoder.state_dict(), f'files/{sid}.adecoder.pkl')
-            best_vloss = results['protein']['loss']
+            if len(acro_data) > 0:
+                torch.save(engine.aSeq2Seq.state_dict(), f'files/{sid}.acronym.pkl')
+            if len(para_data) > 0:
+                torch.save(engine.pSeq2Seq.state_dict(), f'files/{sid}.paraphrase.pkl')
 
         if (e + 1) % int(args['--print_every']) == 0:
-            eval_dict = {
-                    'morpheme': {'data': morph_val_data, 'tests': ['acc']},
-                    'protein': {'data': prot_val_data, 'tests': ['loss', 'auc']},
-                    #'paraphrase': {'data': para_val_data, 'tests': ['loss', 'acc']},
-                    #'acronym': {'data': acronym_val_data, 'tests': ['loss', 'acc']}
-                    }
+            eval_dict = {}
+            if len(morph_data) > 0:
+                eval_dict['morpheme'] = {'data': morph_val_data, 'tests': ['acc']},
+            if len(prot_data) > 0:
+                eval_dict['protein'] = {'data': prot_val_data, 'tests': ['loss', 'auc']},
+            if len(acro_data) > 0:
+                eval_dict['acronym'] = {'data': acro_val_data, 'tests': ['acc']},
+            if len(para_data) > 0:
+                eval_dict['paraphrase'] = {'data': para_val_data, 'tests': ['acc']},
             results = evaluate.run(engine, eval_dict)
 
             print(f'Epoch {e:02d} done.    \tTrain, \tValid.,\tV. AUC,\tV. Acc.')
-            print_results(results['protein'], loss=loss[0], tag='protein')
-            print_results(results['morpheme'], loss=loss[1], tag='morpheme')
-            #print_results(results, loss=loss[2], tag='acronym')
-            #print_results(results, loss=loss[3], tag='paraphrase')
+            output  = print_results(results['protein'], loss=loss[0], tag='protein')
+            output += print_results(results['morpheme'], loss=loss[1], tag='morpheme')
+            output += print_results(results['acronym'], loss=loss[2], tag='acronym')
+            output += print_results(results['paraphrase'], loss=loss[3], tag='paraphrase')
 
-        with open('scoreboard.txt', 'a') as w:
-            w.write(f"{shot}{sid},{results['protein']['auc']:.4f},{results['protein']['loss']:.4f},0.0,0.0\n")
-
+            with open('scoreboard.txt', 'a') as w:
+                w.write(f"{shot}{sid},{output}\n")
