@@ -45,7 +45,7 @@ class LoadData(Dataset):
     def __init__(self, filename:str, batch_size:int=1000, empty=False) -> None:
         super(LoadData, self).__init__()
         self.batch_size = batch_size
-        self.data = []
+        self.data: List[Tuple] = [] 
 
         if not empty:
             assert os.path.isfile(filename)
@@ -64,7 +64,7 @@ class LoadData(Dataset):
         return math.ceil(len(self.data) / self.batch_size)
 
     # get a batch of data, size of batch is determined by batch_size
-    def __getitem__(self, index:int) -> List[Tuple[torch.Tensor,torch.Tensor]]:
+    def __getitem__(self, index:int) -> Tuple[torch.Tensor,torch.Tensor, torch.Tensor, torch.Tensor]:
         start = index * self.batch_size
         stop = min((index + 1) * self.batch_size, len(self.data))
         assert start < stop
@@ -144,10 +144,10 @@ class MorphemeData(LoadData):
         return data
 
 class ProteinData(LoadData):
-    def __init__(self, filename:str, batch_size:int=1000, empty=False):
+    def __init__(self, filename:str, batch_size:int=1000, empty=False) -> None:
         super(ProteinData, self).__init__(filename, batch_size, empty)
 
-    def load(self, fn:str) -> List[Tuple[torch.Tensor,torch.Tensor]]:
+    def load(self, fn:str) -> List[Tuple[torch.Tensor, torch.Tensor]]:
         # classes[index] :: list of names for the protein indexed by index
         # each class is a different protein
         # pos is a list of all positive pairs
@@ -162,7 +162,7 @@ class ProteinData(LoadData):
         return data
 
     # for auc validation testing
-    def get_neg(self, quant:int) -> Tuple[List, List]:
+    def get_neg(self, quant:int) -> Tuple:
         p1 = []
         p2 = []
         for i in range(quant):

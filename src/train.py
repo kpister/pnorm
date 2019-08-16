@@ -49,7 +49,7 @@ def invert(ls, ordering):
         output[ridx] = ls[i]
     return output
 
-def train(engine: models.Engine, 
+def train(engine: eng.Engine, 
           prot_data: dataset.ProteinData, 
           morph_data: dataset.MorphemeData,
           acro_data: dataset.AcronymData,
@@ -139,8 +139,8 @@ if __name__ == '__main__':
 
     prot_data       = dataset.ProteinData(os.path.join(args['--protein_data'], 'train.txt'), batch_size=bs, empty=args['--protein_data']=='')
     prot_val_data   = dataset.ProteinData(os.path.join(args['--protein_data'], 'val.txt'), batch_size=bs, empty=args['--protein_data']=='')
-    acronym_data    = dataset.AcronymData(os.path.join(args['--acronym_data'], 'train.txt'), batch_size=bs, empty=args['--acronym_data']=='') 
-    acronym_val_data = dataset.AcronymData(os.path.join(args['--acronym_data'], 'val.txt'), batch_size=bs, empty=args['--acronym_data']=='') 
+    acro_data       = dataset.AcronymData(os.path.join(args['--acronym_data'], 'train.txt'), batch_size=bs, empty=args['--acronym_data']=='') 
+    acro_val_data   = dataset.AcronymData(os.path.join(args['--acronym_data'], 'val.txt'), batch_size=bs, empty=args['--acronym_data']=='') 
     morph_data      = dataset.MorphemeData(os.path.join(args['--morpheme_data'], 'train.txt'), batch_size=bs, empty=args['--morpheme_data']=='') 
     morph_val_data  = dataset.MorphemeData(os.path.join(args['--morpheme_data'], 'val.txt'), batch_size=bs, empty=args['--morpheme_data']=='') 
     para_data       = dataset.ParaData(os.path.join(args['--paraphrase_data'], 'train.txt'), batch_size=bs, empty=args['--paraphrase_data']=='') 
@@ -152,7 +152,7 @@ if __name__ == '__main__':
         loss = train(engine=engine, 
                      prot_data=prot_data, 
                      morph_data=morph_data,
-                     acro_data=acronym_data,
+                     acro_data=acro_data,
                      para_data=para_data)
 
         eval_dict = {'protein': {'data': prot_val_data, 'tests': ['loss', 'auc']}}
@@ -173,13 +173,13 @@ if __name__ == '__main__':
         if (e + 1) % int(args['--print_every']) == 0:
             eval_dict = {}
             if len(morph_data) > 0:
-                eval_dict['morpheme'] = {'data': morph_val_data, 'tests': ['acc']},
+                eval_dict['morpheme'] = {'data': morph_val_data, 'tests': ['acc']}
             if len(prot_data) > 0:
-                eval_dict['protein'] = {'data': prot_val_data, 'tests': ['loss', 'auc']},
+                eval_dict['protein'] = {'data': prot_val_data, 'tests': ['loss', 'auc']}
             if len(acro_data) > 0:
-                eval_dict['acronym'] = {'data': acro_val_data, 'tests': ['acc']},
+                eval_dict['acronym'] = {'data': acro_val_data, 'tests': ['acc']}
             if len(para_data) > 0:
-                eval_dict['paraphrase'] = {'data': para_val_data, 'tests': ['acc']},
+                eval_dict['paraphrase'] = {'data': para_val_data, 'tests': ['acc']}
             results = evaluate.run(engine, eval_dict)
 
             print(f'Epoch {e:02d} done.    \tTrain, \tValid.,\tV. AUC,\tV. Acc.')

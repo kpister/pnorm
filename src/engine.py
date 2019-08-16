@@ -1,4 +1,4 @@
-from constants import VOCAB_SIZE, MAX_LENGTH
+from constants import VOCAB_SIZE
 
 import loss
 import encoder
@@ -24,7 +24,7 @@ import math
 # --word_embedding 300...
 # --layers 3,4...
 class Engine:
-    def __init__(self, args: Dict[str, Any]):
+    def __init__(self, args: Dict[str, Any]) -> None:
         # engine attributes:
         # encoder/decoder_optim
         # encoder/decoder

@@ -3,7 +3,7 @@ Usage:
     evaluate.py --config=FILE
 """
 
-import models
+import engine as eng
 import evaluate
 import dataset
 
@@ -192,6 +192,7 @@ if __name__ == '__main__':
     morph_data         = dataset.MorphemeData(cfg['--morphology_data'], batch_size=bs) 
     cfg['--input_dim'] = VOCAB_SIZE + morph_data.num_tags
 
-    engine = models.Engine(cfg)
-    eval_results = evaluate.run(engine, [ ('auc', prot_val_data)])
+    engine = eng.Engine(cfg)
+    eval_dict = {'protein' : {'data': prot_val_data, 'tests': ['loss', 'auc']}}
+    eval_results = evaluate.run(engine, eval_dict)
     print(eval_results)
