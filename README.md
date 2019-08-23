@@ -1,6 +1,6 @@
 ## Protein Normalization
 
-Work building on my thesis: [Towards Extracting...](...)
+Work building on my thesis: [Towards Extracting Protein-Compound Interactions from BioChemical Patents](https://escholarship.org/uc/item/6pz742g7)
 
 ### TODO
 
