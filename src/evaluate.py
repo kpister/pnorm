@@ -18,6 +18,18 @@ import json
 import os
 
 spin = ['|', '/', '-', '\\']
+def pad_lists(lists, pad_int, device, pad_len=None, dtype=torch.float):
+    """Pad lists (in a list) to make them of equal size and return a tensor."""
+
+    if pad_len is None:
+        pad_len = max([len(lst) for lst in lists])
+    new_list = []
+    for lst in lists:
+        if len(lst) < pad_len:
+            new_list.append(lst + [pad_int] * (pad_len - len(lst)))
+        else:
+            new_list.append(lst[:pad_len])
+    return torch.tensor(new_list, dtype=dtype, device=device)
 
 def invert(ls, ordering):
     output = torch.empty_like(ls)
@@ -57,8 +69,8 @@ def loss(engine, data):
         for idx in range(len(data)):
             x, x_lens, x_ord, y, y_lens, y_ord = data[idx]
             hidden = engine.pEncoder.initHidden(x.size(0))
-            x_enc, hid = engine.pEncoder(x.to(engine.device), x_lens, hidden, norm=True)
-            y_enc, hid = engine.pEncoder(y.to(engine.device), y_lens, hidden, norm=True)
+            x_enc, hid, _ = engine.pEncoder(x.to(engine.device), x_lens, hidden, norm=True)
+            y_enc, hid, _ = engine.pEncoder(y.to(engine.device), y_lens, hidden, norm=True)
 
             x_enc = invert(x_enc, x_ord)
             y_enc = invert(y_enc, y_ord)
@@ -94,15 +106,19 @@ def acc(engine, data, dtype):
 
     with torch.no_grad():
         for idx in range(len(data)):
-            trg, _ , src, src_len = data[idx]
-            trg = trg.transpose(0,1).to(engine.device)
-            src = src.to(engine.device)
-            src_len = src_len.to(engine.device)
+            lemma, lem_len, trg, _, tag = data[idx]
+            #lemma = lemma.to(engine.device)
+            #lem_len = lem_len.to(engine.device)
+            #tag = tag.to(engine.device)
+            #trg = trg.transpose(0,1).to(engine.device)
 
-            output = engine.mSeq2Seq(src, src_len, trg)
-            loss += F.nll_loss(output[1:].view(-1,VOCAB_SIZE), trg[1:].contiguous().view(-1))
+            p_ws, _, _ = model(lemma, tag)
+            #p_ws, _, _ = model(lemma, lem_len, trg.size(0), tag)
+            trg = pad_lists(trg, EOS_token, engine.device, pad_len=25, dtype=torch.long).transpose(0,1).to(engine.device)
+            #trg = torch.stack(trg).transpose(0,1).to(engine.device)
+            loss += F.nll_loss(p_ws.view(-1, VOCAB_SIZE), trg.contiguous().view(-1))
 
-            for true, gen in zip(trg.transpose(0,1), torch.argmax(output, 2).transpose(0,1)):
+            for true, gen in zip(trg.transpose(0,1), torch.argmax(p_ws, 2)):
                 #if random.random() < 0.001:
                     #print(f'{tensor2word(true)}:{tensor2word(gen)}')
                 # This is currently strict equality
@@ -129,13 +145,13 @@ def auc(engine, data):
     increments = (max_distance - min_distance) / resolution
     total_tested = 0.
 
-    engine.encoder.eval()
+    engine.pEncoder.eval()
     with torch.no_grad():
         for idx in range(len(data)):
             x, x_lens, x_ord, y, y_lens, y_ord = data[idx]
             hidden = engine.pEncoder.initHidden(x.size(0))
-            x_enc, hid = engine.pEncoder(x.to(engine.device), x_lens, hidden, norm=True)
-            y_enc, hid = engine.pEncoder(y.to(engine.device), y_lens, hidden, norm=True)
+            x_enc, hid, _ = engine.pEncoder(x.to(engine.device), x_lens, hidden, norm=True)
+            y_enc, hid, _ = engine.pEncoder(y.to(engine.device), y_lens, hidden, norm=True)
 
             x_enc = invert(x_enc, x_ord)
             y_enc = invert(y_enc, y_ord)
@@ -153,8 +169,8 @@ def auc(engine, data):
             x, x_lens, x_ord, y, y_lens, y_ord = data.get_neg(x.size(0))
 
             hidden = engine.pEncoder.initHidden(x.size(0))
-            x_enc, hid = engine.pEncoder(x.to(engine.device), x_lens, hidden, norm=True)
-            y_enc, hid = engine.pEncoder(y.to(engine.device), y_lens, hidden, norm=True)
+            x_enc, hid, _ = engine.pEncoder(x.to(engine.device), x_lens, hidden, norm=True)
+            y_enc, hid, _ = engine.pEncoder(y.to(engine.device), y_lens, hidden, norm=True)
 
             x_enc = invert(x_enc, x_ord)
             y_enc = invert(y_enc, y_ord)
@@ -167,7 +183,7 @@ def auc(engine, data):
             total_tested += len(x)
             print(f'Evaluating {spin[idx%4]}', end='\r')
 
-    false_pos_rate = [(total_tested - tn)/total_tested for tn in true_neg_buckets] +[1.]# fpr = _/_
+    false_pos_rate = [(total_tested - tn)/total_tested for tn in true_neg_buckets] +[1.]# fpr = fp/(fp+tn)
     true_pos_rate = [tp/total_tested for tp in true_pos_buckets] + [1.]# tpr = _/_
     roc_auc = metrics.auc(false_pos_rate, true_pos_rate)
 

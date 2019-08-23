@@ -14,8 +14,12 @@ tag_dict['end'] = 2
 def pad(tensor, size):
     return torch.cat((tensor, torch.tensor([EOS_token]*(size - tensor.size(0)), dtype=torch.long)))
 # convert any sequence to a tensor of the ascii values
-def seq2tensor(seq: str) -> torch.Tensor:
+def oldseq2tensor(seq: str) -> torch.Tensor:
     return torch.tensor([SOS_token] + [ord(c) for c in seq] + [EOS_token], dtype=torch.long)
+
+def seq2tensor(seq: str) -> torch.Tensor:
+    #return torch.tensor([SOS_token] + [ord(c) for c in seq] + [EOS_token], dtype=torch.long)
+    return [SOS_token] + [ord(c) for c in seq] + [EOS_token]
 def target2tensor(seq: str) -> torch.Tensor:
     return torch.tensor([ord(c) for c in seq], dtype=torch.long)
 
@@ -25,6 +29,14 @@ def tag2idx(tag: str) -> int:
         tag_dict[tag] = tag_dict['end']
         tag_dict['end'] += 1
     return tag_dict[tag]
+
+def tag2tensor(tag: str) -> torch.Tensor:
+    #ret = torch.zeros(4, dtype=torch.long)
+    return [tag2idx(p) for p in tag.split(';')]
+
+    for i,p in enumerate(tag.split(';')):
+        ret[i] = tag2idx(p)
+    return ret
 
 # convert tag to tensor -- uses tag2idx
 def input2tensor(word:str, tag: str) -> torch.Tensor:
@@ -38,7 +50,7 @@ def input2tensor(word:str, tag: str) -> torch.Tensor:
 
 # create a list of tuples -- tensor of the leader and tensor of each other member
 def pairs(prot_list: List[str]) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-    leader, new_prot_list = seq2tensor(prot_list[0]), [seq2tensor(i) for i in prot_list[1:]]
+    leader, new_prot_list = oldseq2tensor(prot_list[0]), [oldseq2tensor(i) for i in prot_list[1:]]
     return [(leader, p) for p in new_prot_list]
 
 class LoadData(Dataset):
@@ -127,7 +139,7 @@ class AcronymData(LoadData):
 class MorphemeData(LoadData):
     def __init__(self, filename:str, batch_size:int=1000, empty=False) -> None:
         super(MorphemeData, self).__init__(filename, batch_size, empty)
-        self.num_tags = len(tag_dict) - 1
+        self.num_tags = len(tag_dict) + 1
 
     def load(self, fn:str) -> List[Tuple[torch.Tensor,torch.Tensor]]:
         # each line is target\tform\ttags
@@ -136,12 +148,34 @@ class MorphemeData(LoadData):
             line = line.strip()
             try:
                 lemma, word, tags = line.split('\t')
-                data.append((seq2tensor(lemma), 
-                             input2tensor(word, tags)))
+                data.append((seq2tensor(lemma), seq2tensor(word), tag2tensor(tags)))
+                #data.append((seq2tensor(lemma), input2tensor(word, tags)))
 
             except Exception as e:
                 print(f'Trouble parsing morph file on line {idx}: {e}')
         return data
+
+    def __getitem__(self, index:int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        start = index * self.batch_size
+        stop = min((index + 1) * self.batch_size, len(self.data))
+        assert start < stop
+
+        #left_max_len = max(self.data[start:stop], key=lambda v: len(v[0]))[0].size(0)
+        #right_max_len = max(self.data[start:stop], key=lambda v: len(v[1]))[1].size(0)
+
+        left, right, tag = zip(*self.data[start:stop])
+        return left, None, right, None, tag
+
+        left, right,tag = [], [], []
+        left_lens, right_lens = [], []
+        for l, r, t in sorted(self.data[start:stop], key=lambda v: len(v[0]), reverse=True):
+            left.append(pad(l, left_max_len))
+            right.append(pad(r, right_max_len))
+            tag.append(t)
+            left_lens.append(l.size(0))
+            right_lens.append(r.size(0))
+
+        return left,left_lens, right,right_lens,tag
 
 class ProteinData(LoadData):
     def __init__(self, filename:str, batch_size:int=1000, empty=False) -> None:
@@ -168,11 +202,12 @@ class ProteinData(LoadData):
         for i in range(quant):
             leader, follow = random.sample(list(self.classes), 2)
 
-            p1.append(seq2tensor(self.classes[leader][0]))
-            p2.append(seq2tensor(random.choice(self.classes[follow][1:])))
+            p1.append(oldseq2tensor(self.classes[leader][0]))
+            p2.append(oldseq2tensor(random.choice(self.classes[follow][1:])))
 
         left_max_len = max(p1, key=lambda v: len(v)).size(0)
         right_max_len = max(p2, key=lambda v: len(v)).size(0)
+        max_len = max(left_max_len, right_max_len)
 
         left, right = [], []
         left_lens, right_lens = [], []
@@ -183,13 +218,13 @@ class ProteinData(LoadData):
         i = 0
         for l, r in sorted(zip(p1,p2), key=lambda v: v[1].size(0), reverse=True):
             left_tmp.append((l, i))
-            right.append(pad(r, right_max_len))
+            right.append(pad(r, max_len))
             right_lens.append(r.size(0))
             i += 1
 
         # sort by left hand side
         for l, i in sorted(left_tmp, key=lambda v: len(v[0]), reverse=True):
-            left.append(pad(l, left_max_len))
+            left.append(pad(l, max_len))
             left_ord.append(i)
             left_lens.append(l.size(0))
 
