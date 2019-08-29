@@ -1,6 +1,6 @@
 """Evaluate
 Usage:
-    evaluate.py --config=FILE
+    evaluate.py --config=FILE.json
 """
 
 import engine as eng
@@ -116,7 +116,7 @@ def acc(engine, data, dtype):
             #p_ws, _, _ = model(lemma, lem_len, trg.size(0), tag)
             trg = pad_lists(trg, EOS_token, engine.device, pad_len=25, dtype=torch.long).transpose(0,1).to(engine.device)
             #trg = torch.stack(trg).transpose(0,1).to(engine.device)
-            loss += F.nll_loss(p_ws.view(-1, VOCAB_SIZE), trg.contiguous().view(-1))
+            loss += F.nll_loss(p_ws.view(-1, VOCAB_SIZE), trg.contiguous().view(-1)) / len(lemma)
 
             for true, gen in zip(trg.transpose(0,1), torch.argmax(p_ws, 2)):
                 #if random.random() < 0.001:
@@ -202,11 +202,11 @@ if __name__ == '__main__':
         cfg = json.loads(f.read())
 
     bs = int(cfg['--batch_size'])
-    bs = 1
+    #bs = 1
 
     prot_val_data      = dataset.ProteinData(os.path.join(cfg['--protein_data'], 'val.txt'), batch_size=bs)
-    morph_data         = dataset.MorphemeData(cfg['--morphology_data'], batch_size=bs) 
-    cfg['--input_dim'] = VOCAB_SIZE + morph_data.num_tags
+    morph_data         = dataset.MorphemeData(os.path.join(cfg['--morpheme_data'], 'val.txt'), batch_size=bs) 
+    cfg['--tag_size'] = morph_data.num_tags
 
     engine = eng.Engine(cfg)
     eval_dict = {'protein' : {'data': prot_val_data, 'tests': ['loss', 'auc']}}

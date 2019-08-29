@@ -23,8 +23,9 @@ class EncoderLstm(nn.Module):
         self.char_embed = nn.Embedding(opts['input_dim'], self.char_embedding_dim)
 
         #self.prot_embed = nn.GRU(self.char_embedding_dim, self.hidden_dim, self.num_layers, batch_first=True, dropout=opts['dropout'])
-        self.share_lstm = nn.LSTM(self.char_embedding_dim, self.mhs, batch_first=True)
+        self.share_lstm = nn.LSTM(self.char_embedding_dim, self.mhs, bidirectional=True, batch_first=True)
         self.prot_embed = nn.LSTM(self.mhs*2, self.hidden_dim, self.num_layers, batch_first=True, bidirectional=self.bidirectional, dropout=opts['dropout'])
+        #self.prot_embed = nn.LSTM(self.char_embedding_dim, self.hidden_dim, self.num_layers, batch_first=True, bidirectional=self.bidirectional, dropout=opts['dropout'])
         
         self.fc = nn.Sequential(
                 nn.Dropout(opts['dropout']),

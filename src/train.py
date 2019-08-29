@@ -41,6 +41,7 @@ from torch.autograd import Variable
 from torch.nn import functional as F
 from tqdm import trange #type: ignore
 from docopt import docopt #type: ignore
+from torch import optim
 import hashlib
 import json
 
@@ -95,7 +96,7 @@ def train(engine: eng.Engine,
             y_enc = invert(y_enc, y_ord)
             ploss = engine.pLoss._forward(x_enc, y_enc)
 
-            loss += (ploss / x.size(0))
+            loss += (ploss / x.size(0)) * 10
             prot_epoch_loss += (ploss.item() / x.size(0))
 
         if idx < len(morph_data):
@@ -170,19 +171,21 @@ if __name__ == '__main__':
     best_pEncoder = None
     best_mSeq2Seq = None
 
-    for it in range(2): # decay steps
+    lr = float(args['--lr'])
+    for it in range(3): # decay steps
         if it != 0:
             lr = lr / 10. # decay factor
             epochs = 10   # length of fine tuning
-            engine.pEncoder = torch.load_state_dict(best_pEncoder, device=engine.device)
+            engine.pEncoder.load_state_dict(best_pEncoder)
             engine.pOptimizer = optim.Adam(engine.pEncoder.parameters(), lr=lr)
 
             # turn off morpheme?
             # morph_data.data = []
-            engine.mSeq2Seq = torch.load_state_dict(best_mSeq2Seq, device=engine.device)
+            engine.mSeq2Seq.load_state_dict(best_mSeq2Seq)
             engine.mOptimizer = optim.Adam(engine.mSeq2Seq.parameters(), lr=lr)
 
         for e in range(epochs):
+            saved = False
             loss = train(engine=engine, 
                          prot_data=prot_data, 
                          morph_data=morph_data,
@@ -195,6 +198,7 @@ if __name__ == '__main__':
             # short circuit the or on empty proteins
             if args['--protein_data']=='' or results['protein']['loss'] < best_vloss: 
                 if len(prot_data) > 0:
+                    saved = True
                     best_pEncoder = engine.pEncoder.state_dict()
                     torch.save(engine.pEncoder.state_dict(), f'files/{sid}.protein.pkl')
                     best_vloss = results['protein']['loss']
@@ -214,7 +218,10 @@ if __name__ == '__main__':
                 eval_dict['paraphrase'] = {'data': para_val_data, 'tests': ['acc']}
                 results = evaluate.run(engine, eval_dict)
 
-                print(f'Epoch {e:02d} done.    \tTrain, \tValid.,\tV. AUC,\tV. Acc.')
+                if saved:
+                    print(f'Epoch {e:02d} done. [saved] \tTrain, \tValid.,\tV. AUC,\tV. Acc.')
+                else:
+                    print(f'Epoch {e:02d} done.    \tTrain, \tValid.,\tV. AUC,\tV. Acc.')
                 output  = print_results(results['protein'], loss=loss[0], tag='protein')
                 output += print_results(results['morpheme'], loss=loss[1], tag='morpheme')
                 output += print_results(results['acronym'], loss=loss[2], tag='acronym')
